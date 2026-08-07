@@ -11,7 +11,8 @@ import {
   type TermRow,
 } from "@/lib/db/queries.ts";
 import { DeleteRecord } from "@/app/_components/delete-record.tsx";
-import { finalRating, generalAverage, isPassing } from "@/lib/grading.ts";
+import { PrintPanel } from "@/app/_components/print-panel.tsx";
+import { exactFinalRating, finalRating, generalAverage, isPassing } from "@/lib/grading.ts";
 import { jhsFinalRatingIsComputed } from "@/lib/sf10/jhs-map.ts";
 
 export const dynamic = "force-dynamic";
@@ -21,14 +22,33 @@ function termLabel(t: TermRow): string {
 }
 
 /**
- * Resolves the printed final rating for a subject row.
+ * Resolves a subject's final rating.
  *
  * Mirrors the template exactly: JHS averages four quarters, SHS two - except JHS Homeroom
  * Guidance and CAT, which carry no formula on the form and so use the stored value.
+ *
+ * `exact` is the unrounded value, which the general average must be computed from; `display`
+ * is what the form prints. Rounding twice shifts the result.
  */
-function resolveFinal(s: SubjectRow, index: number, isJhs: boolean): number | null {
-  if (isJhs && !jhsFinalRatingIsComputed(index)) return s.final_rating;
-  return finalRating({ q1: s.q1, q2: s.q2, q3: s.q3, q4: s.q4 }, isJhs ? "jhs" : "shs");
+function resolveFinal(
+  s: SubjectRow,
+  _index: number,
+  isJhs: boolean,
+): { exact: number | null; display: number | null } {
+  // A stored final wins. On an imported record that is the value the original form carries -
+  // often a rounded figure the registrar pasted over the formula - and the form's own general
+  // average is built from those. Recomputing would quietly disagree with the paper record.
+  if (s.final_rating != null) {
+    return { exact: s.final_rating, display: excelRoundForDisplay(s.final_rating) };
+  }
+  const level = isJhs ? "jhs" : "shs";
+  const quarters = { q1: s.q1, q2: s.q2, q3: s.q3, q4: s.q4 };
+  return { exact: exactFinalRating(quarters, level), display: finalRating(quarters, level) };
+}
+
+/** Both templates print final ratings as whole numbers. */
+function excelRoundForDisplay(n: number): number {
+  return Math.sign(n) * Math.round(Math.abs(n));
 }
 
 function Grade({ value }: { value: number | null }) {
@@ -39,8 +59,19 @@ function Grade({ value }: { value: number | null }) {
 function TermCard({ term, index }: { term: TermRow; index: number }) {
   const isJhs = term.level <= 10;
   const subjects = getSubjects(term.id);
-  const finals = subjects.map((s, i) => resolveFinal(s, i, isJhs));
-  const genAve = generalAverage(finals);
+  const resolved = subjects.map((s, i) => resolveFinal(s, i, isJhs));
+  const finals = resolved.map((r) => r.display);
+
+  // An imported record shows the general average its own form carried. Across the school's
+  // real files that figure was produced three different ways, so recomputing it would quietly
+  // disagree with the paper record. We only compute when nothing was stored.
+  const genAve =
+    term.general_average != null
+      ? excelRoundForDisplay(term.general_average)
+      : generalAverage(
+          resolved.map((r) => r.exact),
+          isJhs ? "jhs" : "shs",
+        );
   const passing = isPassing(genAve);
 
   return (
@@ -143,6 +174,16 @@ export default async function StudentPage({ params }: { params: Promise<{ id: st
   const terms = getTerms(studentId);
   const forms = availableForms(terms);
   const issueCount = countIssuesForStudent(studentId);
+
+  // Only offer levels the learner actually has, per form.
+  const levelsByForm: Record<string, number[]> = {};
+  for (const form of forms) {
+    levelsByForm[form] = [
+      ...new Set(
+        terms.filter((t) => (form === "jhs" ? t.level <= 10 : t.level >= 11)).map((t) => t.level),
+      ),
+    ].sort((a, b) => a - b);
+  }
   const given = [student.first_name, student.middle_name, student.name_ext]
     .filter(Boolean)
     .join(" ");
@@ -163,16 +204,7 @@ export default async function StudentPage({ params }: { params: Promise<{ id: st
           <Link className="btn" href={`/students/${studentId}/edit`}>
             Edit record
           </Link>
-          {forms.map((form) => (
-            <a
-              key={form}
-              className="btn"
-              data-variant="primary"
-              href={`/api/students/${studentId}/sf10?form=${form}`}
-            >
-              Print SF10 {form.toUpperCase()}
-            </a>
-          ))}
+          <PrintPanel studentId={studentId} forms={forms} levelsByForm={levelsByForm} />
         </div>
       </div>
 

@@ -60,6 +60,11 @@ export interface TermRecord extends SchoolInfo {
   subjects: SubjectRecord[];
   /** JHS writes this literal ("Promoted"); on SHS it is the REMARKS line. */
   promotionRemark?: string;
+  /**
+   * The general average as the source form carried it. Read on import, never written back -
+   * the template computes this cell itself. Absent for records created in the app.
+   */
+  generalAverage?: number;
 }
 
 export interface JhsEligibility {

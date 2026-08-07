@@ -31,18 +31,33 @@ export async function GET(
     return new Response("Invalid student id", { status: 400 });
   }
 
-  const form = new URL(request.url).searchParams.get("form");
+  const search = new URL(request.url).searchParams;
+  const form = search.get("form");
   if (form !== "jhs" && form !== "shs") {
     return new Response("form must be 'jhs' or 'shs'", { status: 400 });
+  }
+
+  // Optional `?levels=7,8`. Absent means every level this form covers.
+  const levelParam = search.get("levels");
+  const levels = levelParam
+    ? levelParam
+        .split(",")
+        .map((s) => Number(s.trim()))
+        .filter((n) => Number.isInteger(n))
+    : undefined;
+
+  if (levelParam && (levels?.length ?? 0) === 0) {
+    return new Response("levels must be a comma-separated list of grade levels", { status: 400 });
   }
 
   const student = getStudent(studentId);
   if (!student) return new Response("Student not found", { status: 404 });
 
-  const record = buildSf10Record(studentId, form);
+  const record = buildSf10Record(studentId, form, levels);
   if (!record || record.terms.length === 0) {
+    const scope = levels ? `grade ${levels.join(", ")}` : form.toUpperCase();
     return new Response(
-      `This learner has no ${form.toUpperCase()} terms on record, so there is nothing to print.`,
+      `This learner has no ${scope} terms on record, so there is nothing to print.`,
       { status: 409 },
     );
   }

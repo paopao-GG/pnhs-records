@@ -19,6 +19,8 @@ import { join } from "node:path";
 import { getDb } from "../db/index.ts";
 import { Workbook } from "../xlsx/workbook.ts";
 import { parseShsWorkbook, NotAnShsFormError } from "../sf10/import-shs.ts";
+import { parseJhsWorkbook, NotAJhsFormError } from "../sf10/import-jhs.ts";
+import { detectForm, UnknownFormError, type Sf10Form } from "../sf10/detect-form.ts";
 import type { Issue } from "../sf10/normalise.ts";
 import type { Sf10Record } from "../sf10/types.ts";
 
@@ -46,9 +48,21 @@ export interface ImportSummary {
   issueCount: number;
 }
 
+/**
+ * Every .xlsx under a folder, including subfolders, as paths relative to it.
+ *
+ * Recursive because the school's files are organised into per-form subfolders, and pointing
+ * the importer at the parent should do the obvious thing. Re-importing is free, so casting a
+ * wide net costs nothing.
+ *
+ * `~$` files are Word/Excel lock files left behind by an open document, not records.
+ */
 export function listSf10Files(folder: string): string[] {
-  return readdirSync(folder)
-    .filter((f) => f.toLowerCase().endsWith(".xlsx") && !f.startsWith("~$"))
+  return readdirSync(folder, { recursive: true, encoding: "utf8" })
+    .filter((f) => {
+      const base = f.split(/[\\/]/).pop() ?? f;
+      return f.toLowerCase().endsWith(".xlsx") && !base.startsWith("~$");
+    })
     .sort();
 }
 
@@ -116,15 +130,22 @@ export function importBytes(bytes: Uint8Array, filename: string): FileResult {
     };
   }
 
+  // Which form this is decides the parser, the grade levels it owns, and what a re-import
+  // replaces. Detected from the workbook itself rather than the filename, which is unreliable.
+  let form: Sf10Form;
   let parsed;
   try {
-    parsed = parseShsWorkbook(Workbook.fromBuffer(bytes));
+    const wb = Workbook.fromBuffer(bytes);
+    form = detectForm(wb);
+    parsed = form === "jhs" ? parseJhsWorkbook(wb) : parseShsWorkbook(wb);
   } catch (err) {
     const message =
-      err instanceof NotAnShsFormError
+      err instanceof UnknownFormError ||
+      err instanceof NotAnShsFormError ||
+      err instanceof NotAJhsFormError
         ? err.message
         : `Could not read this workbook: ${err instanceof Error ? err.message : String(err)}`;
-    recordFile(sha256, filename, "shs", null, "failed", message);
+    recordFile(sha256, filename, "unknown", null, "failed", message);
     return { filename, status: "failed", issues: [], error: message };
   }
 
@@ -133,7 +154,7 @@ export function importBytes(bytes: Uint8Array, filename: string): FileResult {
   const fatal = issues.filter((i) => i.severity === "error");
   if (!record.student.lrn || fatal.length > 0) {
     const message = fatal[0]?.message ?? "No LRN on the form.";
-    const fileId = recordFile(sha256, filename, "shs", null, "failed", message);
+    const fileId = recordFile(sha256, filename, form, null, "failed", message);
     saveIssues(fileId, null, issues);
     return { filename, status: "failed", issues, error: message };
   }
@@ -142,10 +163,10 @@ export function importBytes(bytes: Uint8Array, filename: string): FileResult {
     .prepare(`SELECT id FROM students WHERE lrn = ?`)
     .get(record.student.lrn) as { id: number } | undefined;
 
-  const studentId = writeRecord(record, existing?.id);
+  const studentId = writeRecord(record, form, existing?.id);
   const status: ImportStatus = existing ? "updated" : "imported";
 
-  const fileId = recordFile(sha256, filename, "shs", studentId, status, null);
+  const fileId = recordFile(sha256, filename, form, studentId, status, null);
   saveIssues(fileId, studentId, issues);
 
   return {
@@ -163,10 +184,15 @@ export function importBytes(bytes: Uint8Array, filename: string): FileResult {
 /**
  * Write one parsed record. All-or-nothing: a failure part-way through must not leave a
  * learner with half their semesters.
+ *
+ * `form` decides which grade levels this file owns. A JHS form replaces grades 7-10 and leaves
+ * 11-12 alone; an SHS form does the reverse. That is what lets a learner who attended both
+ * exist as one record built from two files, in either import order.
  */
-function writeRecord(record: Sf10Record, existingId?: number): number {
+function writeRecord(record: Sf10Record, form: Sf10Form, existingId?: number): number {
   const db = getDb();
   const s = record.student;
+  const levelClause = form === "jhs" ? "level <= 10" : "level >= 11";
 
   db.exec("BEGIN");
   try {
@@ -204,23 +230,30 @@ function writeRecord(record: Sf10Record, existingId?: number): number {
       studentId = (db.prepare(`SELECT last_insert_rowid() AS id`).get() as { id: number }).id;
     }
 
-    // This form owns the learner's SHS terms, so replace them wholesale. Grade levels 7-10
-    // come from the JHS form and are deliberately left alone.
+    // This form owns its own grade levels, so replace them wholesale. The other form's levels
+    // are deliberately left alone - re-importing a learner's SHS record must not erase the JHS
+    // years imported from a different file.
     db.prepare(
       `DELETE FROM term_subjects
-        WHERE term_id IN (SELECT id FROM enrollment_terms WHERE student_id = ? AND level >= 11)`,
+        WHERE term_id IN (SELECT id FROM enrollment_terms WHERE student_id = ? AND ${levelClause})`,
     ).run(studentId);
-    db.prepare(`DELETE FROM enrollment_terms WHERE student_id = ? AND level >= 11`).run(studentId);
+    db.prepare(`DELETE FROM enrollment_terms WHERE student_id = ? AND ${levelClause}`).run(
+      studentId,
+    );
 
     const insTerm = db.prepare(
       `INSERT INTO enrollment_terms
          (student_id, level, semester, school_year, section, adviser, track_strand,
-          school_name, school_id, district, division, region, promotion_remark)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          school_name, school_id, district, division, region, promotion_remark, general_average)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
+    // All four quarters: SHS uses only q1/q2 and leaves the rest null, JHS uses all four.
+    // `final_rating` is stored only where the template has no formula for it - JHS Homeroom
+    // Guidance and CAT - and the parser supplies it for exactly those rows.
     const insSubject = db.prepare(
-      `INSERT INTO term_subjects (term_id, ordinal, subject_name, category, q1, q2)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO term_subjects
+         (term_id, ordinal, subject_name, category, q1, q2, q3, q4, final_rating, remarks)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
 
     for (const term of record.terms) {
@@ -238,10 +271,22 @@ function writeRecord(record: Sf10Record, existingId?: number): number {
         term.division ?? null,
         term.region ?? null,
         term.promotionRemark ?? null,
+        term.generalAverage ?? null,
       );
       const termId = (db.prepare(`SELECT last_insert_rowid() AS id`).get() as { id: number }).id;
       term.subjects.forEach((sub, i) =>
-        insSubject.run(termId, i, sub.name, sub.category ?? null, sub.q1 ?? null, sub.q2 ?? null),
+        insSubject.run(
+          termId,
+          i,
+          sub.name,
+          sub.category ?? null,
+          sub.q1 ?? null,
+          sub.q2 ?? null,
+          sub.q3 ?? null,
+          sub.q4 ?? null,
+          sub.finalRating ?? null,
+          sub.remarks ?? null,
+        ),
       );
     }
 
@@ -267,6 +312,30 @@ function writeRecord(record: Sf10Record, existingId?: number): number {
         el.otherCredential ?? null,
         el.examDate ?? null,
         el.clcNameAddress ?? null,
+      );
+    }
+
+    const jel = record.jhsEligibility;
+    if (jel) {
+      db.prepare(`DELETE FROM jhs_eligibility WHERE student_id = ?`).run(studentId);
+      db.prepare(
+        `INSERT INTO jhs_eligibility
+           (student_id, elem_school_name, elem_school_id, elem_school_address,
+            elem_general_average, citation, pept_rating, als_rating, other_credential,
+            exam_date, testing_center)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        studentId,
+        jel.elemSchoolName ?? null,
+        jel.elemSchoolId ?? null,
+        jel.elemSchoolAddress ?? null,
+        toNumber(jel.elemGeneralAverage),
+        jel.citation ?? null,
+        jel.peptRating ?? null,
+        jel.alsRating ?? null,
+        jel.otherCredential ?? null,
+        jel.examDate ?? null,
+        jel.testingCenter ?? null,
       );
     }
 

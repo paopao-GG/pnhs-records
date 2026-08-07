@@ -11,9 +11,11 @@
     "spike": "node scripts/spike-fill.ts",
     "verify": "node scripts/verify-fidelity.ts",
     "check": "node scripts/check-export.ts",
-    "test": "node scripts/test-grading.ts",
+    "test": "node scripts/test-grading.ts && node scripts/test-migrations.ts",
     "import:dry": "node scripts/import-dry-run.ts",
-    "roundtrip": "node scripts/check-roundtrip.ts"
+    "roundtrip": "node scripts/check-roundtrip.ts",
+    "test:migrations": "node scripts/test-migrations.ts",
+    "check:ga": "node scripts/check-general-average.ts"
   },
   "dependencies": {
     "fflate": "^0.8.2",

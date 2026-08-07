@@ -108,7 +108,27 @@ export function fillJhs(templatePath: string, record: Sf10Record): Workbook {
 
   for (const block of JHS_BLOCKS) {
     const term = record.terms.find((t) => t.level === block.level);
-    if (!term) continue;
+
+    /*
+     * A grade level the learner never attended must print empty.
+     *
+     * The blank template pre-prints the standard learning-area names in all four blocks, so
+     * skipping an unused block would leave "Filipino, English, Mathematics…" under Grade 9 for
+     * a learner who left after Grade 8 — a form that implies enrolment that never happened.
+     * The school's own files clear these blocks, and a round trip against them caught it.
+     *
+     * Within a block the learner DID attend, unused rows keep their printed names: that is how
+     * the real forms look, with the label present and the grades blank.
+     */
+    if (!term) {
+      const blanks: string[] = [];
+      for (let i = 0; i < JHS_SUBJECT_ROW_COUNT; i++) {
+        const row = block.headerRow + JHS_OFFSET.firstSubject + i;
+        blanks.push(`${JHS_SUBJECT_COL.name}${row}`);
+      }
+      w.clear(block.sheet, blanks);
+      continue;
+    }
 
     const schoolRow = block.headerRow + JHS_OFFSET.school;
     const classRow = block.headerRow + JHS_OFFSET.classInfo;

@@ -69,6 +69,9 @@ CREATE TABLE IF NOT EXISTS enrollment_terms (
   division          TEXT,
   region            TEXT,
   promotion_remark  TEXT,
+  -- The general average as the source document carried it, for imported records. Null for
+  -- records encoded in the app, which compute it. See migration 1 for why it is not derived.
+  general_average   REAL,
   UNIQUE (student_id, level, semester)
 );
 
@@ -100,6 +103,27 @@ CREATE TABLE IF NOT EXISTS school_settings (
   key    TEXT PRIMARY KEY,
   value  TEXT NOT NULL
 );
+
+-- Append-only record of every change to a learner's data.
+--
+-- Autosave writes as you type with no undo, so this is what makes a mistyped grade
+-- recoverable: it holds the previous value of every field that was ever changed. It is also
+-- the audit trail once accounts exist — `user_id` is null until then.
+--
+-- Written inside the same transaction as the change itself, or the two could disagree.
+CREATE TABLE IF NOT EXISTS record_history (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  student_id  INTEGER REFERENCES students (id) ON DELETE CASCADE,
+  table_name  TEXT    NOT NULL,
+  row_id      INTEGER NOT NULL,
+  field       TEXT    NOT NULL,
+  old_value   TEXT,
+  new_value   TEXT,
+  user_id     INTEGER,
+  changed_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_history_student ON record_history (student_id, changed_at);
 
 -- One row per SF10 file taken in. The hash is what makes re-importing a folder safe and
 -- collapses byte-identical duplicates (the school's set contains such a pair).

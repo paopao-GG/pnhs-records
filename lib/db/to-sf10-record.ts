@@ -76,12 +76,21 @@ function toStudent(row: StudentRow) {
  * Build the record for one printed form. Terms are filtered to that form's grade levels so
  * printing the JHS sheet for a Grade 12 student cannot leak SHS terms onto it.
  */
-export function buildSf10Record(studentId: number, form: "jhs" | "shs"): Sf10Record | null {
+export function buildSf10Record(
+  studentId: number,
+  form: "jhs" | "shs",
+  levels?: number[],
+): Sf10Record | null {
   const student = getStudent(studentId);
   if (!student) return null;
 
+  // The form filter is a hard boundary — a JHS sheet can never carry Grade 11. `levels` narrows
+  // within that, so a registrar can reissue just Grade 9 without the other years appearing.
+  const wanted = levels && levels.length > 0 ? new Set(levels) : null;
+
   const terms = getTerms(studentId)
     .filter((t) => (form === "jhs" ? t.level <= 10 : t.level >= 11))
+    .filter((t) => !wanted || wanted.has(t.level))
     .map(toTerm);
 
   const el = getEligibility(studentId, form);

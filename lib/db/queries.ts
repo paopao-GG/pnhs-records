@@ -45,6 +45,8 @@ export interface TermRow {
   division: string | null;
   region: string | null;
   promotion_remark: string | null;
+  /** As the source form carried it; null for records encoded in the app. */
+  general_average: number | null;
 }
 
 export interface SubjectRow {
@@ -137,6 +139,106 @@ export function availableForms(terms: TermRow[]): ("jhs" | "shs")[] {
 // ---------------------------------------------------------------------------
 // Mutations
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Change history
+// ---------------------------------------------------------------------------
+
+/**
+ * Record one field change. Call inside the caller's transaction, never on its own.
+ *
+ * Unchanged values are skipped, so autosave firing on a field the user only tabbed through
+ * does not fill the log with noise.
+ */
+export function recordChange(
+  studentId: number | null,
+  table: string,
+  rowId: number,
+  field: string,
+  oldValue: unknown,
+  newValue: unknown,
+): void {
+  const before = oldValue == null ? null : String(oldValue);
+  const after = newValue == null ? null : String(newValue);
+  if (before === after) return;
+
+  getDb()
+    .prepare(
+      `INSERT INTO record_history (student_id, table_name, row_id, field, old_value, new_value)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(studentId, table, rowId, field, before, after);
+}
+
+export interface HistoryRow {
+  id: number;
+  field: string;
+  old_value: string | null;
+  new_value: string | null;
+  changed_at: string;
+  table_name: string;
+  row_id: number;
+}
+
+export function getHistoryForStudent(studentId: number, limit = 50): HistoryRow[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT id, field, old_value, new_value, changed_at, table_name, row_id
+         FROM record_history
+        WHERE student_id = ?
+        ORDER BY id DESC
+        LIMIT ?`,
+    )
+    .all(studentId, limit);
+  return plainAll<HistoryRow>(rows);
+}
+
+/**
+ * Update one quarter (or the stored final) on a subject, logging the change.
+ *
+ * Autosave calls this per field rather than saving the whole record, so two people editing
+ * different subjects do not overwrite each other, and the history shows exactly what moved.
+ */
+export function updateSubjectField(
+  subjectId: number,
+  field: "q1" | "q2" | "q3" | "q4" | "final_rating",
+  value: number | null,
+): { studentId: number | null; termId: number | null } {
+  const db = getDb();
+
+  const before = db
+    .prepare(
+      `SELECT s.${field} AS current, s.term_id, t.student_id
+         FROM term_subjects s
+         JOIN enrollment_terms t ON t.id = s.term_id
+        WHERE s.id = ?`,
+    )
+    .get(subjectId) as { current: number | null; term_id: number; student_id: number } | undefined;
+
+  if (!before) throw new Error(`subject ${subjectId} not found`);
+
+  db.exec("BEGIN");
+  try {
+    db.prepare(`UPDATE term_subjects SET ${field} = ? WHERE id = ?`).run(value, subjectId);
+    recordChange(before.student_id, "term_subjects", subjectId, field, before.current, value);
+
+    // Editing a quarter invalidates a general average that came from an imported form: the
+    // stored figure described the old grades. Clearing it makes the app compute from what is
+    // now on screen rather than keep showing a stale number from the paper record.
+    if (field !== "final_rating") {
+      db.prepare(
+        `UPDATE enrollment_terms SET general_average = NULL WHERE id = ? AND general_average IS NOT NULL`,
+      ).run(before.term_id);
+    }
+
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+
+  return { studentId: before.student_id, termId: before.term_id };
+}
 
 export function updateSubjectGrades(
   subjectId: number,
@@ -385,6 +487,63 @@ export function deleteStudent(studentId: number): void {
     ).run(studentId);
 
     db.prepare(`DELETE FROM students WHERE id = ?`).run(studentId);
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+}
+
+/**
+ * Add one subject to the end of a term.
+ *
+ * `term_subjects` is UNIQUE(term_id, ordinal), so the ordinal comes from MAX+1 rather than a
+ * row count — deleting a middle subject leaves a gap, and counting would collide with it.
+ */
+export function appendSubject(termId: number, name: string, category: string | null): number {
+  const db = getDb();
+  const row = db
+    .prepare(`SELECT COALESCE(MAX(ordinal), -1) + 1 AS next FROM term_subjects WHERE term_id = ?`)
+    .get(termId) as { next: number };
+
+  db.prepare(
+    `INSERT INTO term_subjects (term_id, ordinal, subject_name, category)
+     VALUES (?, ?, ?, ?)`,
+  ).run(termId, row.next, name, category);
+
+  const created = db.prepare(`SELECT last_insert_rowid() AS id`).get() as { id: number };
+
+  const owner = db
+    .prepare(`SELECT student_id FROM enrollment_terms WHERE id = ?`)
+    .get(termId) as { student_id: number } | undefined;
+  recordChange(owner?.student_id ?? null, "term_subjects", created.id, "subject_name", null, name);
+
+  return created.id;
+}
+
+export function deleteSubject(subjectId: number): void {
+  const db = getDb();
+  const before = db
+    .prepare(
+      `SELECT s.subject_name, t.student_id
+         FROM term_subjects s
+         JOIN enrollment_terms t ON t.id = s.term_id
+        WHERE s.id = ?`,
+    )
+    .get(subjectId) as { subject_name: string; student_id: number } | undefined;
+  if (!before) return;
+
+  db.exec("BEGIN");
+  try {
+    db.prepare(`DELETE FROM term_subjects WHERE id = ?`).run(subjectId);
+    recordChange(
+      before.student_id,
+      "term_subjects",
+      subjectId,
+      "subject_name",
+      before.subject_name,
+      null,
+    );
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");

@@ -8,6 +8,7 @@
  */
 
 import type { ShsCategory } from "./shs-map.ts";
+import { jhsLearningAreas } from "./jhs-map.ts";
 
 export interface SubjectTemplate {
   name: string;
@@ -73,4 +74,26 @@ export const SHS_TRACKS = [
 
 export function shsSubjectsFor(level: 11 | 12, semester: 1 | 2): SubjectTemplate[] {
   return SHS_SUBJECT_TEMPLATES[`${level}-${semester}`] ?? [];
+}
+
+export interface CatalogueEntry {
+  name: string;
+  category: string | null;
+}
+
+/**
+ * What the "Add subject" dropdown offers for a term.
+ *
+ * A suggestion list, not a constraint — the school's real files contain subjects this
+ * catalogue does not have (`Business Math`, `Work Immersion/Research/Career Advocacy`, and
+ * assorted spellings), so the UI also accepts free text.
+ */
+export function subjectCatalogue(level: number, semester: number | null): CatalogueEntry[] {
+  if (level <= 10) {
+    return jhsLearningAreas(level as 7 | 8 | 9 | 10).map((name) => ({ name, category: null }));
+  }
+  return shsSubjectsFor(level as 11 | 12, (semester ?? 1) as 1 | 2).map((s) => ({
+    name: s.name,
+    category: s.category,
+  }));
 }

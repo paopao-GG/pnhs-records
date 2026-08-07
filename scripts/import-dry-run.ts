@@ -7,22 +7,25 @@
  */
 
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { parseShsFile } from "../lib/sf10/import-shs.ts";
+import { listSf10Files } from "../lib/import/import-sf10.ts";
+import { parseShsWorkbook } from "../lib/sf10/import-shs.ts";
+import { parseJhsWorkbook } from "../lib/sf10/import-jhs.ts";
+import { detectForm } from "../lib/sf10/detect-form.ts";
+import { Workbook } from "../lib/xlsx/workbook.ts";
 import { fullName } from "../lib/sf10/types.ts";
 
-const folder = resolve(process.argv[2] ?? "sf10-copy");
+const folder = resolve(process.argv[2] ?? "sf10-files");
 
-const files = readdirSync(folder)
-  .filter((f) => f.toLowerCase().endsWith(".xlsx") && !f.startsWith("~$"))
-  .sort();
+const files = listSf10Files(folder);
 
 console.log(`\nDry run over ${folder}`);
 console.log(`${files.length} .xlsx files\n`);
 
 const seenHashes = new Map<string, string>();
 const seenLrns = new Map<string, string>();
+const byForm: Record<string, number> = {};
 let parsed = 0;
 let failed = 0;
 let duplicates = 0;
@@ -42,8 +45,12 @@ for (const file of files) {
   seenHashes.set(hash, file);
 
   try {
-    const { record, issues, termCount, subjectCount } = parseShsFile(path);
+    const wb = Workbook.open(path);
+    const form = detectForm(wb);
+    const { record, issues, termCount, subjectCount } =
+      form === "jhs" ? parseJhsWorkbook(wb) : parseShsWorkbook(wb);
     parsed++;
+    byForm[form] = (byForm[form] ?? 0) + 1;
 
     const lrn = record.student.lrn || "(none)";
     const clash = seenLrns.get(lrn);
@@ -58,7 +65,7 @@ for (const file of files) {
     const flag = errs ? "ERR " : warns ? "WARN" : "ok  ";
 
     console.log(
-      `  ${flag}  ${fullName(record.student)}  LRN ${lrn}  ` +
+      `  ${flag}  [${form.toUpperCase()}] ${fullName(record.student)}  LRN ${lrn}  ` +
         `${termCount} terms, ${subjectCount} subjects`,
     );
     for (const i of issues) {
@@ -74,7 +81,7 @@ for (const file of files) {
 
 console.log("\n" + "-".repeat(72));
 console.log(`  files            ${files.length}`);
-console.log(`  parsed           ${parsed}`);
+console.log(`  parsed           ${parsed}  (${Object.entries(byForm).map(([f, n]) => `${n} ${f.toUpperCase()}`).join(", ") || "none"})`);
 console.log(`  duplicate files  ${duplicates}`);
 console.log(`  failed to parse  ${failed}`);
 console.log(`  distinct LRNs    ${seenLrns.size}`);

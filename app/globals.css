@@ -627,6 +627,193 @@ a:hover {
   margin-left: 9px;
 }
 
+/* -------------------------------------------------------- folder browser */
+
+.folder-browser[data-loading="true"] {
+  opacity: 0.6;
+}
+
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+}
+
+.crumb {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  color: var(--official);
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.crumb:hover {
+  background: var(--official-tint);
+}
+
+.crumb-sep {
+  color: var(--ink-faint);
+}
+
+.folder-list {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--paper);
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 7px 12px;
+  border: none;
+  border-bottom: 1px solid var(--rule);
+  background: none;
+  text-align: left;
+}
+
+.folder-row:last-child {
+  border-bottom: none;
+}
+
+.folder-name {
+  flex: 1;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.folder-name::before {
+  content: "▸ ";
+  color: var(--ink-faint);
+}
+
+.folder-row:hover {
+  background: var(--official-tint);
+}
+
+.folder-use {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+/* --------------------------------------------------------- autosave + rows */
+
+.save-indicator {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 40;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 9px 15px;
+  border-radius: var(--radius);
+  border: 1px solid var(--rule-strong);
+  background: var(--paper-raised);
+  box-shadow: var(--shadow-card);
+  animation: rise 0.2s ease backwards;
+}
+
+.save-indicator[data-state="saved"] {
+  color: var(--pass);
+  border-color: color-mix(in srgb, var(--pass) 45%, transparent);
+}
+
+.save-indicator[data-state="error"] {
+  color: var(--seal);
+  border-color: var(--seal);
+  background: var(--seal-tint);
+}
+
+.row-remove {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1;
+  padding: 4px 7px;
+  border-radius: 2px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+
+.row-remove:hover {
+  color: var(--seal);
+  border-color: color-mix(in srgb, var(--seal) 40%, transparent);
+  background: var(--seal-tint);
+}
+
+.row-remove[data-confirm="yes"] {
+  color: var(--seal);
+  border-color: var(--seal);
+  font-weight: 600;
+}
+
+.add-subject {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px dashed var(--rule-strong);
+  border-radius: var(--radius);
+  background: var(--paper);
+}
+
+.add-subject-btn {
+  border-style: dashed;
+}
+
+/* ----------------------------------------------------------- print picker */
+
+.print-group {
+  position: relative;
+}
+
+.print-count {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.level-picker {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  padding: 12px 14px;
+  min-width: 190px;
+}
+
+.level-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
 /* ------------------------------------------------------------ danger zone */
 
 .danger-zone {

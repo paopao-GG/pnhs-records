@@ -10,6 +10,8 @@
  * independent cross-check on this module. If the two ever disagree, this module is wrong.
  */
 
+import { JHS_GENERAL_AVERAGE_SUBJECT_ROWS } from "./sf10/jhs-map.ts";
+
 export const PASSING_GRADE = 75;
 
 /**
@@ -35,20 +37,48 @@ export interface QuarterGrades {
 }
 
 /**
- * Final rating for one subject.
+ * Final rating for one subject, as the form displays it.
  *
  * Returns null when no quarter has been encoded yet, so a half-filled record shows blanks
  * rather than a misleading number. JHS averages four quarters, SHS two.
+ *
+ * Both templates display this as a whole number (`numFmt 0` on JHS, an explicit `ROUND(...,0)`
+ * on SHS), so rounding here matches what prints in both cases.
  */
 export function finalRating(g: QuarterGrades, level: "jhs" | "shs"): number | null {
-  const quarters = level === "jhs" ? [g.q1, g.q2, g.q3, g.q4] : [g.q1, g.q2];
-  const avg = average(quarters.filter((q): q is number => q != null));
-  return avg === null ? null : excelRound(avg);
+  const exact = exactFinalRating(g, level);
+  return exact === null ? null : excelRound(exact);
 }
 
-/** Mean of the subject final ratings for a term. */
-export function generalAverage(finals: (number | null | undefined)[]): number | null {
-  const avg = average(finals.filter((f): f is number => f != null));
+/**
+ * The unrounded final rating.
+ *
+ * JHS needs this: its template stores `AVERAGE(U,Y,AC,AG)` with no ROUND, and the general
+ * average is computed from those *exact* values before being rounded once for display.
+ * Rounding twice shifts the result.
+ */
+export function exactFinalRating(g: QuarterGrades, level: "jhs" | "shs"): number | null {
+  const quarters = level === "jhs" ? [g.q1, g.q2, g.q3, g.q4] : [g.q1, g.q2];
+  return average(quarters.filter((q): q is number => q != null));
+}
+
+/**
+ * General average for a term, matching the template's own formula.
+ *
+ * **JHS counts only the first eight subjects** — see `JHS_GENERAL_AVERAGE_SUBJECT_ROWS` in
+ * jhs-map.ts for why — and averages their *unrounded* finals. Averaging all thirteen rounded
+ * finals instead disagreed with the school's real forms on 37 of 85 grade blocks.
+ *
+ * SHS averages every subject in the semester, which is what its template does.
+ *
+ * Pass exact finals from `exactFinalRating()`, not rounded ones.
+ */
+export function generalAverage(
+  finals: (number | null | undefined)[],
+  level: "jhs" | "shs" = "shs",
+): number | null {
+  const counted = level === "jhs" ? finals.slice(0, JHS_GENERAL_AVERAGE_SUBJECT_ROWS) : finals;
+  const avg = average(counted.filter((f): f is number => f != null));
   return avg === null ? null : excelRound(avg);
 }
 

@@ -34,7 +34,7 @@ export default function ImportPage() {
         build against.
       </div>
 
-      <ImportPanel defaultFolder="sf10-copy" />
+      <ImportPanel defaultFolder="sf10-files" />
 
       {history.length > 0 && (
         <section className="card">

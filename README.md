@@ -75,15 +75,21 @@ computed.
 ## Layout
 
 ```
-app/                    Next.js pages, print route, server actions
+app/                    Next.js pages, print + upload routes, server actions
 lib/xlsx/               Zip-level workbook reader/writer (style-preserving)
-lib/sf10/               Cell maps for both forms, the Sf10Record contract, exporter
+lib/sf10/               Cell maps for both forms, the Sf10Record contract, parser, exporter
+lib/import/             Import orchestration — hashing, dedup, issue recording
 lib/db/                 Schema access and the DB -> Sf10Record bridge
 lib/grading.ts          DepEd grade rules, used by the UI and re-run on save
-db/schema.sql           Six tables
+db/schema.sql           Eight tables
+docs/technical-design.md  How and why it works — read before changing lib/sf10 or lib/xlsx
 templates/              The school's official SF10 files — treat as read-only
 data/pnhs.db            The records database (git-ignored)
 ```
+
+**[docs/technical-design.md](docs/technical-design.md)** is the handover document: the
+constraints the DepEd form imposes, the invariants that must not be broken, and the bugs that
+have already been paid for once.
 
 ## Notes for the next build
 

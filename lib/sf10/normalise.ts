@@ -73,7 +73,10 @@ export function parseFormDate(
     };
   }
 
-  const text = String(raw).trim();
+  // Trailing punctuation is a typing slip, not data: "02/20/2008." means the same date.
+  // Stripping it is safe because it cannot change which date is meant - unlike, say, a
+  // missing digit, which is left alone and flagged.
+  const text = String(raw).trim().replace(/[.,;\s]+$/, "");
   if (text === "") return ok(undefined);
 
   // A serial that arrived as text.

@@ -22,6 +22,7 @@ import {
   SHS_SUBJECT_ROW_COUNT,
   SHS_TRACK_COL,
   SHS_CATEGORIES,
+  SHS_GENERAL_AVERAGE_COL,
   type ShsCategory,
 } from "./shs-map.ts";
 import type { Sf10Record, SubjectRecord, TermRecord } from "./types.ts";
@@ -159,6 +160,8 @@ export function parseShsWorkbook(wb: Workbook): ParsedShs {
       schoolName: cleanText(read(`${SHS_HEADER_COL.schoolName}${h}`)),
       schoolId: cleanText(read(`${SHS_HEADER_COL.schoolId}${h}`)),
       promotionRemark: cleanText(read(`${block.remarksCol}${block.remarksRow}`)),
+      // As the source form carries it — see TermRecord.generalAverage.
+      generalAverage: numberOnly(read(`${SHS_GENERAL_AVERAGE_COL}${block.generalAverageRow}`)),
       subjects,
     });
   }
@@ -187,4 +190,9 @@ export function parseShsFile(path: string): ParsedShs {
 function numberOrText(raw: CellValue): number | string | undefined {
   if (raw === null || raw === undefined || raw === "") return undefined;
   return typeof raw === "number" ? raw : (cleanText(raw) ?? undefined);
+}
+
+/** Cached formula errors arrive as null from getCell; anything non-numeric is dropped. */
+function numberOnly(raw: CellValue): number | undefined {
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
 }

@@ -10,6 +10,7 @@
 
 import { strict as assert } from "node:assert";
 import {
+  exactFinalRating,
   finalRating,
   generalAverage,
   isPassing,
@@ -56,8 +57,36 @@ check("a partially encoded subject averages only what exists", () => {
 });
 
 check("general average ignores unencoded subjects", () => {
-  assert.equal(generalAverage([90, 92, null, 88]), 90);
-  assert.equal(generalAverage([null, null]), null);
+  assert.equal(generalAverage([90, 92, null, 88], "shs"), 90);
+  assert.equal(generalAverage([null, null], "shs"), null);
+});
+
+check("JHS general average counts only the first eight learning areas", () => {
+  // Music, Arts, PE and Health are MAPEH components and must not be counted again.
+  // Eight 90s then four 50s: counting all twelve would drag this to 77.
+  const finals = [90, 90, 90, 90, 90, 90, 90, 90, 50, 50, 50, 50];
+  assert.equal(generalAverage(finals, "jhs"), 90);
+  assert.equal(generalAverage(finals, "shs"), 77); // SHS counts everything, by contrast
+});
+
+check("JHS general average matches a real form (BOCIO, Grade 7)", () => {
+  // Straight from sf10-files/SF10-jhs/SF10-JHS - BOCIO, NILO C..xlsx.
+  // The form's own AVERAGE(AJ26:AO33) evaluates to 86.0625 and prints as 86.
+  const topEight = [85.25, 86.25, 89.25, 85.75, 84, 86.5, 85.5, 86];
+  const withMapehComponents = [...topEight, 85, 85.75, 87.5, 85.75];
+
+  assert.equal(generalAverage(withMapehComponents, "jhs"), 86);
+
+  // The exact mean of those eight is what the form holds before display rounding.
+  const mean = topEight.reduce((a, b) => a + b, 0) / topEight.length;
+  assert.equal(mean, 86.0625);
+});
+
+check("exactFinalRating does not round, finalRating does", () => {
+  // The JHS template stores AVERAGE(...) unrounded and displays it with number format "0".
+  assert.equal(exactFinalRating({ q1: 80, q2: 85, q3: 86, q4: 90 }, "jhs"), 85.25);
+  assert.equal(finalRating({ q1: 80, q2: 85, q3: 86, q4: 90 }, "jhs"), 85);
+  assert.equal(exactFinalRating({}, "jhs"), null);
 });
 
 check("75 is passing, 74 is not", () => {

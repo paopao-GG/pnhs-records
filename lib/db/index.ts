@@ -12,6 +12,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { runMigrations } from "./migrations.ts";
 
 const DB_DIR = join(process.cwd(), "data");
 const DB_PATH = join(DB_DIR, "pnhs.db");
@@ -27,7 +28,7 @@ export function getDb(): DatabaseSync {
 
   mkdirSync(DB_DIR, { recursive: true });
   const db = new DatabaseSync(DB_PATH);
-  db.exec(readFileSync(SCHEMA_PATH, "utf8"));
+  applySchema(db);
 
   globalThis.__pnhsDb = db;
   return db;
@@ -37,8 +38,19 @@ export function getDb(): DatabaseSync {
 export function openDb(path: string = DB_PATH): DatabaseSync {
   mkdirSync(DB_DIR, { recursive: true });
   const db = new DatabaseSync(path);
-  db.exec(readFileSync(SCHEMA_PATH, "utf8"));
+  applySchema(db);
   return db;
+}
+
+/**
+ * Create anything missing, then migrate anything that already exists.
+ *
+ * Order matters: `schema.sql` creates new tables, and only then do migrations alter tables
+ * that were already there. See migrations.ts for why both halves are needed.
+ */
+function applySchema(db: DatabaseSync): void {
+  db.exec(readFileSync(SCHEMA_PATH, "utf8"));
+  runMigrations(db);
 }
 
 export const DB_FILE = DB_PATH;

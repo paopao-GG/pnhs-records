@@ -1,36 +1,35 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useCallback, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { saveRecord, type RecordEdit } from "../actions.ts";
-import { finalRating, generalAverage, isPassing, promotionRemark } from "@/lib/grading.ts";
+import { removeSubject, saveLearnerInfo } from "../actions.ts";
+import {
+  exactFinalRating,
+  finalRating,
+  generalAverage,
+  isPassing,
+  promotionRemark,
+} from "@/lib/grading.ts";
 import { jhsFinalRatingIsComputed } from "@/lib/sf10/jhs-map.ts";
 import type { StudentRow, SubjectRow, TermRow } from "@/lib/db/queries.ts";
+import { GradeCell, type QuarterField, type SaveState } from "./subject-row.tsx";
+import { AddSubject } from "./add-subject.tsx";
 
 /**
  * Grade encoding grid.
  *
- * Grades are held as strings so a cleared box stays empty instead of collapsing to 0 - the
- * difference between "not yet encoded" and "scored zero" matters on a permanent record.
- * Final ratings and the general average recompute as you type, using the same lib/grading
- * module the server re-runs on save.
+ * Grades save themselves as you type — there is no Save button. Every change is written to
+ * `record_history` with its previous value, which is what makes that safe despite there being
+ * no undo.
+ *
+ * Learner-identity fields save on **blur**, not per keystroke. Autosaving the LRN as it is
+ * typed would fire a UNIQUE violation on every prefix of a valid one.
  */
-
-type Draft = Record<number, { q1: string; q2: string; q3: string; q4: string; final: string }>;
 
 interface TermBundle {
   term: TermRow;
   subjects: SubjectRow[];
 }
-
-const num = (s: string): number | null => {
-  const t = s.trim();
-  if (t === "") return null;
-  const n = Number(t);
-  return Number.isFinite(n) ? n : null;
-};
-
-const str = (n: number | null): string => (n == null ? "" : String(n));
 
 export function GradeEditor({
   student,
@@ -39,185 +38,69 @@ export function GradeEditor({
   student: StudentRow;
   bundles: TermBundle[];
 }) {
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [message, setMessage] = useState<string | null>(null);
 
-  const [info, setInfo] = useState({
-    lrn: student.lrn,
-    lastName: student.last_name,
-    firstName: student.first_name,
-    middleName: student.middle_name ?? "",
-    nameExt: student.name_ext ?? "",
-    sex: student.sex ?? "",
-    birthdate: student.birthdate ?? "",
-  });
-
-  const [termMeta, setTermMeta] = useState(() =>
-    Object.fromEntries(
-      bundles.map((b) => [
-        b.term.id,
-        {
-          schoolYear: b.term.school_year ?? "",
-          section: b.term.section ?? "",
-          adviser: b.term.adviser ?? "",
-        },
-      ]),
-    ),
-  );
-
-  const [draft, setDraft] = useState<Draft>(() => {
-    const d: Draft = {};
+  /** Live grade values, seeded from the server and updated as cells save. */
+  const [grades, setGrades] = useState<Record<number, Record<string, number | null>>>(() => {
+    const g: Record<number, Record<string, number | null>> = {};
     for (const b of bundles) {
       for (const s of b.subjects) {
-        d[s.id] = {
-          q1: str(s.q1),
-          q2: str(s.q2),
-          q3: str(s.q3),
-          q4: str(s.q4),
-          final: str(s.final_rating),
-        };
+        g[s.id] = { q1: s.q1, q2: s.q2, q3: s.q3, q4: s.q4, final_rating: s.final_rating };
       }
     }
-    return d;
+    return g;
   });
 
-  const setCell = (id: number, key: keyof Draft[number], value: string) => {
-    setDraft((d) => ({ ...d, [id]: { ...d[id], [key]: value } }));
-    setSaved(false);
-  };
+  const onStateChange = useCallback((state: SaveState, msg?: string) => {
+    setSaveState(state);
+    setMessage(msg ?? null);
+    if (state === "saved") setTimeout(() => setSaveState("idle"), 1600);
+  }, []);
 
-  /** Recomputed on every keystroke so the registrar sees the consequence immediately. */
+  const onSaved = useCallback(
+    (subjectId: number) => (field: QuarterField, value: number | null) => {
+      setGrades((g) => ({ ...g, [subjectId]: { ...g[subjectId], [field]: value } }));
+    },
+    [],
+  );
+
   const computed = useMemo(() => {
     const out: Record<number, { finals: (number | null)[]; genAve: number | null }> = {};
     for (const b of bundles) {
       const isJhs = b.term.level <= 10;
-      const finals = b.subjects.map((s, i) => {
-        const d = draft[s.id];
-        if (isJhs && !jhsFinalRatingIsComputed(i)) return num(d.final);
-        return finalRating(
-          { q1: num(d.q1), q2: num(d.q2), q3: num(d.q3), q4: num(d.q4) },
-          isJhs ? "jhs" : "shs",
-        );
+      const level = isJhs ? "jhs" : "shs";
+
+      const pairs = b.subjects.map((s) => {
+        const g = grades[s.id] ?? {};
+        // A stored final wins — on an imported record that is what the paper form carries.
+        if (g.final_rating != null) {
+          return { display: round(g.final_rating), exact: g.final_rating };
+        }
+        const quarters = { q1: g.q1, q2: g.q2, q3: g.q3, q4: g.q4 };
+        return { display: finalRating(quarters, level), exact: exactFinalRating(quarters, level) };
       });
-      out[b.term.id] = { finals, genAve: generalAverage(finals) };
+
+      // Editing any quarter clears the imported general average server-side, so once a term
+      // has been touched this computation is the authority.
+      const stored = b.term.general_average;
+      out[b.term.id] = {
+        finals: pairs.map((p) => p.display),
+        genAve:
+          stored != null
+            ? round(stored)
+            : generalAverage(
+                pairs.map((p) => p.exact),
+                level,
+              ),
+      };
     }
     return out;
-  }, [bundles, draft]);
-
-  const onSave = () => {
-    setError(null);
-    if (!info.lrn.trim() || !info.lastName.trim() || !info.firstName.trim()) {
-      setError("LRN, last name and first name are required.");
-      return;
-    }
-
-    const payload: RecordEdit = {
-      studentId: student.id,
-      student: {
-        lrn: info.lrn,
-        lastName: info.lastName,
-        firstName: info.firstName,
-        middleName: info.middleName || null,
-        nameExt: info.nameExt || null,
-        sex: info.sex || null,
-        birthdate: info.birthdate || null,
-      },
-      terms: bundles.map((b) => ({
-        id: b.term.id,
-        level: b.term.level,
-        schoolYear: termMeta[b.term.id].schoolYear || null,
-        section: termMeta[b.term.id].section || null,
-        adviser: termMeta[b.term.id].adviser || null,
-        subjects: b.subjects.map((s) => ({
-          id: s.id,
-          q1: num(draft[s.id].q1),
-          q2: num(draft[s.id].q2),
-          q3: num(draft[s.id].q3),
-          q4: num(draft[s.id].q4),
-          finalRating: num(draft[s.id].final),
-        })),
-      })),
-    };
-
-    startTransition(async () => {
-      try {
-        await saveRecord(payload);
-        setSaved(true);
-        router.refresh();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not save the record.");
-      }
-    });
-  };
+  }, [bundles, grades]);
 
   return (
     <>
-      <section className="card">
-        <div className="card-head">
-          <h3>Learner Information</h3>
-        </div>
-        <div className="card-body">
-          <div className="form-grid">
-            <Field label="LRN">
-              <input
-                className="input mono"
-                value={info.lrn}
-                onChange={(e) => setInfo({ ...info, lrn: e.target.value })}
-              />
-            </Field>
-            <Field label="Last Name">
-              <input
-                className="input"
-                value={info.lastName}
-                onChange={(e) => setInfo({ ...info, lastName: e.target.value })}
-              />
-            </Field>
-            <Field label="First Name">
-              <input
-                className="input"
-                value={info.firstName}
-                onChange={(e) => setInfo({ ...info, firstName: e.target.value })}
-              />
-            </Field>
-            <Field label="Middle Name">
-              <input
-                className="input"
-                value={info.middleName}
-                onChange={(e) => setInfo({ ...info, middleName: e.target.value })}
-              />
-            </Field>
-            <Field label="Name Ext.">
-              <input
-                className="input"
-                value={info.nameExt}
-                placeholder="Jr, II, III"
-                onChange={(e) => setInfo({ ...info, nameExt: e.target.value })}
-              />
-            </Field>
-            <Field label="Sex">
-              <select
-                className="select"
-                value={info.sex}
-                onChange={(e) => setInfo({ ...info, sex: e.target.value })}
-              >
-                <option value="">—</option>
-                <option value="M">Male</option>
-                <option value="F">Female</option>
-              </select>
-            </Field>
-            <Field label="Date of Birth">
-              <input
-                className="input mono"
-                value={info.birthdate}
-                placeholder="mm/dd/yyyy"
-                onChange={(e) => setInfo({ ...info, birthdate: e.target.value })}
-              />
-            </Field>
-          </div>
-        </div>
-      </section>
+      <LearnerInfo student={student} onStateChange={onStateChange} />
 
       {bundles.map((b) => {
         const isJhs = b.term.level <= 10;
@@ -232,160 +115,269 @@ export function GradeEditor({
                 Grade {b.term.level}
                 {b.term.semester ? ` · ${b.term.semester === 1 ? "First" : "Second"} Semester` : ""}
               </h3>
+              {b.term.section && <span className="chip">{b.term.section}</span>}
               <div className="spacer" />
-              <span className="stamp" data-tone={passing === null ? "none" : passing ? "pass" : "fail"}>
+              <span
+                className="stamp"
+                data-tone={passing === null ? "none" : passing ? "pass" : "fail"}
+              >
                 {remark ?? "Incomplete"}
               </span>
             </div>
-            <div className="card-body">
-              <div className="form-grid" style={{ marginBottom: 18 }}>
-                <Field label="School Year">
-                  <input
-                    className="input mono"
-                    value={termMeta[b.term.id].schoolYear}
-                    placeholder="2024-2025"
-                    onChange={(e) =>
-                      setTermMeta({
-                        ...termMeta,
-                        [b.term.id]: { ...termMeta[b.term.id], schoolYear: e.target.value },
-                      })
-                    }
-                  />
-                </Field>
-                <Field label="Section">
-                  <input
-                    className="input"
-                    value={termMeta[b.term.id].section}
-                    onChange={(e) =>
-                      setTermMeta({
-                        ...termMeta,
-                        [b.term.id]: { ...termMeta[b.term.id], section: e.target.value },
-                      })
-                    }
-                  />
-                </Field>
-                <Field label="Adviser">
-                  <input
-                    className="input"
-                    value={termMeta[b.term.id].adviser}
-                    onChange={(e) =>
-                      setTermMeta({
-                        ...termMeta,
-                        [b.term.id]: { ...termMeta[b.term.id], adviser: e.target.value },
-                      })
-                    }
-                  />
-                </Field>
-              </div>
 
-              <div className="table-scroll">
-                <table className="ledger">
-                  <thead>
-                    <tr>
-                      <th className="subject">{isJhs ? "Learning Area" : "Subject"}</th>
-                      <th className="num">Q1</th>
-                      <th className="num">Q2</th>
-                      {isJhs && <th className="num">Q3</th>}
-                      {isJhs && <th className="num">Q4</th>}
-                      <th className="final">Final</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {b.subjects.map((s, i) => {
-                      const manualFinal = isJhs && !jhsFinalRatingIsComputed(i);
-                      const value = finals[i];
-                      return (
-                        <tr key={s.id}>
-                          <td className="subject">{s.subject_name}</td>
-                          {(["q1", "q2", "q3", "q4"] as const)
-                            .slice(0, isJhs ? 4 : 2)
-                            .map((q) => (
-                              <td className="num" key={q}>
-                                <input
-                                  className="grade-input"
-                                  type="number"
-                                  min={60}
-                                  max={100}
-                                  value={draft[s.id][q]}
-                                  onChange={(e) => setCell(s.id, q, e.target.value)}
-                                  aria-label={`${s.subject_name} ${q.toUpperCase()}`}
+            <div className="card-body">
+              {b.subjects.length === 0 ? (
+                <p className="muted" style={{ marginTop: 0 }}>
+                  No subjects yet. Add them one at a time as they appear on the form.
+                </p>
+              ) : (
+                <div className="table-scroll">
+                  <table className="ledger">
+                    <thead>
+                      <tr>
+                        <th className="subject">{isJhs ? "Learning Area" : "Subject"}</th>
+                        <th className="num">Q1</th>
+                        <th className="num">Q2</th>
+                        {isJhs && <th className="num">Q3</th>}
+                        {isJhs && <th className="num">Q4</th>}
+                        <th className="final">Final</th>
+                        <th className="num" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {b.subjects.map((s, i) => {
+                        const manualFinal = isJhs && !jhsFinalRatingIsComputed(i);
+                        const value = finals[i];
+                        return (
+                          <tr key={s.id}>
+                            <td className="subject">{s.subject_name}</td>
+                            {(["q1", "q2", "q3", "q4"] as const)
+                              .slice(0, isJhs ? 4 : 2)
+                              .map((q) => (
+                                <td className="num" key={q}>
+                                  <GradeCell
+                                    subjectId={s.id}
+                                    field={q}
+                                    initial={s[q]}
+                                    label={`${s.subject_name} ${q.toUpperCase()}`}
+                                    onSaved={onSaved(s.id)}
+                                    onStateChange={onStateChange}
+                                  />
+                                </td>
+                              ))}
+                            <td className="final">
+                              {manualFinal ? (
+                                <GradeCell
+                                  subjectId={s.id}
+                                  field="final_rating"
+                                  initial={s.final_rating}
+                                  label={`${s.subject_name} final rating`}
+                                  onSaved={onSaved(s.id)}
+                                  onStateChange={onStateChange}
                                 />
-                              </td>
-                            ))}
-                          <td className="final">
-                            {manualFinal ? (
-                              // No AVERAGE formula exists for this row on the printed form,
-                              // so the mark is entered rather than derived.
-                              <input
-                                className="grade-input"
-                                type="number"
-                                min={60}
-                                max={100}
-                                value={draft[s.id].final}
-                                onChange={(e) => setCell(s.id, "final", e.target.value)}
-                                aria-label={`${s.subject_name} final rating`}
+                              ) : value == null ? (
+                                <span className="muted">—</span>
+                              ) : (
+                                <span className={isPassing(value) ? undefined : "grade-fail"}>
+                                  {value}
+                                </span>
+                              )}
+                            </td>
+                            <td className="num">
+                              <RemoveSubject
+                                subjectId={s.id}
+                                name={s.subject_name}
+                                onStateChange={onStateChange}
                               />
-                            ) : value == null ? (
-                              <span className="muted">—</span>
-                            ) : (
-                              <span className={isPassing(value) ? undefined : "grade-fail"}>
-                                {value}
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr>
-                      <td colSpan={isJhs ? 5 : 3}>General Average</td>
-                      <td className="final">
-                        {genAve == null ? (
-                          <span className="muted">—</span>
-                        ) : (
-                          <span className={passing ? undefined : "grade-fail"}>{genAve}</span>
-                        )}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td colSpan={isJhs ? 5 : 3}>General Average</td>
+                        <td className="final">
+                          {genAve == null ? (
+                            <span className="muted">—</span>
+                          ) : (
+                            <span className={passing ? undefined : "grade-fail"}>{genAve}</span>
+                          )}
+                        </td>
+                        <td />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+
+              <div style={{ marginTop: 14 }}>
+                <AddSubject
+                  termId={b.term.id}
+                  level={b.term.level}
+                  semester={b.term.semester}
+                  existing={b.subjects.map((s) => s.subject_name)}
+                />
               </div>
             </div>
           </section>
         );
       })}
 
-      <div
-        style={{
-          position: "sticky",
-          bottom: 0,
-          background: "var(--paper)",
-          borderTop: "1px solid var(--rule)",
-          padding: "14px 0",
-          display: "flex",
-          alignItems: "center",
-          gap: 14,
-        }}
-      >
-        <button className="btn" data-variant="primary" onClick={onSave} disabled={pending}>
-          {pending ? "Saving…" : "Save changes"}
-        </button>
-        {saved && !pending && <span style={{ color: "var(--pass)" }}>Record saved.</span>}
-        {error && <span style={{ color: "var(--seal)" }}>{error}</span>}
-        <span className="muted" style={{ marginLeft: "auto", fontSize: 12.5 }}>
-          Final ratings and the general average are computed as you type.
-        </span>
-      </div>
+      <SaveIndicator state={saveState} message={message} />
     </>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function round(n: number): number {
+  return Math.sign(n) * Math.round(Math.abs(n));
+}
+
+function RemoveSubject({
+  subjectId,
+  name,
+  onStateChange,
+}: {
+  subjectId: number;
+  name: string;
+  onStateChange: (s: SaveState, m?: string) => void;
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [confirming, setConfirming] = useState(false);
+
+  if (!confirming) {
+    return (
+      <button
+        className="row-remove"
+        title={`Remove ${name}`}
+        aria-label={`Remove ${name}`}
+        onClick={() => setConfirming(true)}
+      >
+        ×
+      </button>
+    );
+  }
+
   return (
+    <span className="btn-row" style={{ flexWrap: "nowrap" }}>
+      <button
+        className="row-remove"
+        data-confirm="yes"
+        disabled={pending}
+        onClick={() =>
+          startTransition(async () => {
+            try {
+              await removeSubject(subjectId);
+              router.refresh();
+            } catch (e) {
+              onStateChange("error", e instanceof Error ? e.message : String(e));
+            }
+          })
+        }
+      >
+        Remove
+      </button>
+      <button className="row-remove" onClick={() => setConfirming(false)} disabled={pending}>
+        Keep
+      </button>
+    </span>
+  );
+}
+
+function SaveIndicator({ state, message }: { state: SaveState; message: string | null }) {
+  if (state === "idle" && !message) return null;
+  return (
+    <div className="save-indicator" data-state={state}>
+      {state === "saving" && "Saving…"}
+      {state === "saved" && "Saved"}
+      {state === "error" && (message ?? "Could not save")}
+    </div>
+  );
+}
+
+function LearnerInfo({
+  student,
+  onStateChange,
+}: {
+  student: StudentRow;
+  onStateChange: (s: SaveState, m?: string) => void;
+}) {
+  const [info, setInfo] = useState({
+    lrn: student.lrn,
+    lastName: student.last_name,
+    firstName: student.first_name,
+    middleName: student.middle_name ?? "",
+    nameExt: student.name_ext ?? "",
+    sex: student.sex ?? "",
+    birthdate: student.birthdate ?? "",
+  });
+  const [saved, setSaved] = useState(info);
+
+  const commit = () => {
+    if (JSON.stringify(info) === JSON.stringify(saved)) return;
+    onStateChange("saving");
+    saveLearnerInfo(student.id, {
+      lrn: info.lrn,
+      lastName: info.lastName,
+      firstName: info.firstName,
+      middleName: info.middleName || null,
+      nameExt: info.nameExt || null,
+      sex: info.sex || null,
+      birthdate: info.birthdate || null,
+    })
+      .then(() => {
+        setSaved(info);
+        onStateChange("saved");
+      })
+      .catch((e: unknown) =>
+        onStateChange("error", e instanceof Error ? e.message : String(e)),
+      );
+  };
+
+  const field = (key: keyof typeof info, label: string, extra?: string) => (
     <div className="form-field">
       <label>{label}</label>
-      {children}
+      <input
+        className={`input${extra ?? ""}`}
+        value={info[key]}
+        onChange={(e) => setInfo({ ...info, [key]: e.target.value })}
+        onBlur={commit}
+      />
     </div>
+  );
+
+  return (
+    <section className="card">
+      <div className="card-head">
+        <h3>Learner Information</h3>
+        <span className="muted" style={{ fontSize: 12.5 }}>
+          Saves when you leave a field
+        </span>
+      </div>
+      <div className="card-body">
+        <div className="form-grid">
+          {field("lrn", "LRN", " mono")}
+          {field("lastName", "Last Name")}
+          {field("firstName", "First Name")}
+          {field("middleName", "Middle Name")}
+          {field("nameExt", "Name Ext.")}
+          <div className="form-field">
+            <label>Sex</label>
+            <select
+              className="select"
+              value={info.sex}
+              onChange={(e) => setInfo({ ...info, sex: e.target.value })}
+              onBlur={commit}
+            >
+              <option value="">—</option>
+              <option value="M">Male</option>
+              <option value="F">Female</option>
+            </select>
+          </div>
+          {field("birthdate", "Date of Birth", " mono")}
+        </div>
+      </div>
+    </section>
   );
 }

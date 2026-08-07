@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { isAbsolute, join } from "node:path";
+import { join, resolve as resolvePath, sep } from "node:path";
+import { readdirSync } from "node:fs";
 import {
   folderExists,
   importFolder,
@@ -13,15 +14,25 @@ import {
   createStudent,
   createSubjects,
   createTerm,
+  appendSubject,
   deleteStudent,
+  deleteSubject,
   getSchoolSettings,
   getStudent,
+  recordChange,
   resolveIssue,
+  updateSubjectField,
   updateStudent,
   updateSubjectGrades,
   updateTerm,
 } from "@/lib/db/queries.ts";
-import { finalRating, generalAverage, jhsRemark, promotionRemark } from "@/lib/grading.ts";
+import {
+  exactFinalRating,
+  finalRating,
+  generalAverage,
+  jhsRemark,
+  promotionRemark,
+} from "@/lib/grading.ts";
 import { jhsFinalRatingIsComputed, jhsLearningAreas } from "@/lib/sf10/jhs-map.ts";
 import { shsSubjectsFor } from "@/lib/sf10/subject-templates.ts";
 
@@ -77,16 +88,19 @@ export async function saveRecord(edit: RecordEdit): Promise<void> {
 
   for (const term of edit.terms) {
     const isJhs = term.level <= 10;
+    const level = isJhs ? "jhs" : "shs";
+    // Exact, unrounded finals — the general average is computed from these and rounded once.
     const finals: (number | null)[] = [];
 
     term.subjects.forEach((s, i) => {
-      const computed = finalRating({ q1: s.q1, q2: s.q2, q3: s.q3, q4: s.q4 }, isJhs ? "jhs" : "shs");
+      const quarters = { q1: s.q1, q2: s.q2, q3: s.q3, q4: s.q4 };
+      const computed = finalRating(quarters, level);
 
       // The template owns the final rating everywhere it has an AVERAGE formula. The two
       // JHS rows that lack one (Homeroom Guidance, CAT) are stored instead.
       const storedFinal = isJhs && !jhsFinalRatingIsComputed(i) ? s.finalRating : null;
       const effective = storedFinal ?? computed;
-      finals.push(effective);
+      finals.push(storedFinal ?? exactFinalRating(quarters, level));
 
       // JHS prints a literal Passed/Failed; SHS computes it with its own formula.
       updateSubjectGrades(
@@ -101,7 +115,7 @@ export async function saveRecord(edit: RecordEdit): Promise<void> {
       section: term.section?.trim() || null,
       adviser: term.adviser?.trim() || null,
       school_year: term.schoolYear?.trim() || null,
-      promotion_remark: promotionRemark(generalAverage(finals), isJhs ? "jhs" : "shs"),
+      promotion_remark: promotionRemark(generalAverage(finals, level), level),
     });
   }
 
@@ -127,6 +141,77 @@ export async function deleteRecord(studentId: number, confirmLrn: string): Promi
 
   revalidatePath("/");
   redirect("/?deleted=1");
+}
+
+/**
+ * Autosave one grade cell.
+ *
+ * Deliberately granular: the editor saves the field that changed rather than the whole record,
+ * so a slow save cannot clobber a value the user typed meanwhile, and `record_history` shows
+ * exactly what moved. Returns nothing — the client already has the value it sent.
+ */
+export async function saveSubjectField(
+  subjectId: number,
+  field: "q1" | "q2" | "q3" | "q4" | "final_rating",
+  value: number | null,
+): Promise<void> {
+  if (value != null && (!Number.isFinite(value) || value < 0 || value > 100)) {
+    throw new Error(`Grade ${value} is outside 0–100.`);
+  }
+
+  const { studentId } = updateSubjectField(subjectId, field, value);
+  if (studentId) revalidatePath(`/students/${studentId}`);
+}
+
+/** Save the learner-identity fields. Called on blur, not per keystroke — see the editor. */
+export async function saveLearnerInfo(
+  studentId: number,
+  fields: RecordEdit["student"],
+): Promise<void> {
+  const before = getStudent(studentId);
+  if (!before) throw new Error("That learner record no longer exists.");
+
+  const next = {
+    lrn: fields.lrn.trim(),
+    last_name: fields.lastName.trim().toUpperCase(),
+    first_name: fields.firstName.trim().toUpperCase(),
+    middle_name: fields.middleName?.trim().toUpperCase() || null,
+    name_ext: fields.nameExt?.trim().toUpperCase() || null,
+    sex: fields.sex || null,
+    birthdate: fields.birthdate || null,
+  };
+
+  if (!next.lrn || !next.last_name || !next.first_name) {
+    throw new Error("LRN, last name and first name are required.");
+  }
+
+  updateStudent(studentId, next);
+
+  for (const [field, value] of Object.entries(next)) {
+    recordChange(studentId, "students", studentId, field, (before as never)[field], value);
+  }
+
+  revalidatePath(`/students/${studentId}`);
+  revalidatePath("/");
+}
+
+/** Append a subject to a term, taking the next ordinal. */
+export async function addSubject(
+  termId: number,
+  name: string,
+  category: string | null,
+): Promise<number> {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("A subject needs a name.");
+
+  const id = appendSubject(termId, trimmed, category);
+  revalidatePath("/");
+  return id;
+}
+
+export async function removeSubject(subjectId: number): Promise<void> {
+  deleteSubject(subjectId);
+  revalidatePath("/");
 }
 
 export async function markIssueResolved(issueId: number): Promise<void> {
@@ -160,10 +245,71 @@ export async function runImport(folderInput: string): Promise<ImportSummary> {
   return summary;
 }
 
+export interface FolderListing {
+  /** Path relative to the import root, "" at the top. */
+  path: string;
+  parent: string | null;
+  folders: { name: string; path: string; fileCount: number }[];
+  fileCount: number;
+}
+
+/**
+ * List the subfolders of one folder, for the import browser.
+ *
+ * Confined to IMPORT_ROOT. A typed path cannot escape it — `..` segments resolve and are then
+ * rejected — so this cannot be used to enumerate the server's filesystem. That matters little
+ * on a single-user machine and matters a great deal once accounts exist and this is reachable
+ * over the school network.
+ */
+export async function browseFolder(relative: string): Promise<FolderListing> {
+  const dir = safeResolve(relative);
+  const rel = toRelative(dir);
+
+  const entries = readdirSync(dir, { withFileTypes: true });
+  const folders = entries
+    .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+    .map((e) => {
+      const childPath = rel ? `${rel}/${e.name}` : e.name;
+      let fileCount = 0;
+      try {
+        fileCount = listSf10Files(join(dir, e.name)).length;
+      } catch {
+        fileCount = 0; // unreadable folder; show it with zero rather than failing the listing
+      }
+      return { name: e.name, path: childPath, fileCount };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  return {
+    path: rel,
+    parent: rel === "" ? null : rel.split("/").slice(0, -1).join("/"),
+    folders,
+    fileCount: listSf10Files(dir).length,
+  };
+}
+
+/** Everything importable lives under the project folder. */
+const IMPORT_ROOT = process.cwd();
+
+function safeResolve(relative: string): string {
+  const cleaned = (relative ?? "").trim().replace(/^[/\\]+/, "");
+  const resolved = resolvePath(IMPORT_ROOT, cleaned);
+  const withinRoot =
+    resolved === IMPORT_ROOT || resolved.startsWith(IMPORT_ROOT + sep);
+  if (!withinRoot) {
+    throw new Error("That folder is outside the records folder.");
+  }
+  return resolved;
+}
+
+function toRelative(absolute: string): string {
+  const rel = absolute.slice(IMPORT_ROOT.length).replace(/^[/\\]+/, "");
+  return rel.split(/[\\/]/).filter(Boolean).join("/");
+}
+
 /** Relative paths are resolved against the project folder, which is what users type. */
 function resolveImportFolder(input: string): string {
-  const trimmed = input.trim() || "sf10-copy";
-  return isAbsolute(trimmed) ? trimmed : join(process.cwd(), trimmed);
+  return safeResolve(input.trim() || "sf10-files");
 }
 
 export interface NewStudentInput {
@@ -182,7 +328,13 @@ export interface NewStudentInput {
   trackStrand: string;
 }
 
-/** Creates a student plus their first term, pre-filled with that term's standard subjects. */
+/**
+ * Creates a learner plus their first enrolment term.
+ *
+ * The term starts with **no subjects**. They are added one at a time in the editor, because
+ * the school's real records contain subject sets that differ from the standard catalogue, and
+ * a pre-filled grid invites encoding a grade against the wrong row.
+ */
 export async function createRecord(input: NewStudentInput): Promise<void> {
   const level = Number(input.level);
   const isJhs = level <= 10;
@@ -198,7 +350,7 @@ export async function createRecord(input: NewStudentInput): Promise<void> {
     birthdate: input.birthdate || null,
   });
 
-  const termId = createTerm(
+  createTerm(
     studentId,
     {
       level,
@@ -210,15 +362,6 @@ export async function createRecord(input: NewStudentInput): Promise<void> {
     },
     getSchoolSettings(),
   );
-
-  const subjects = isJhs
-    ? jhsLearningAreas(level as 7 | 8 | 9 | 10).map((name) => ({ name, category: null }))
-    : shsSubjectsFor(level as 11 | 12, (semester ?? 1) as 1 | 2).map((s) => ({
-        name: s.name,
-        category: s.category,
-      }));
-
-  createSubjects(termId, subjects);
 
   revalidatePath("/");
   redirect(`/students/${studentId}/edit`);

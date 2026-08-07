@@ -9,16 +9,21 @@
  * Run: npm run roundtrip
  */
 
-import { readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Workbook } from "../lib/xlsx/workbook.ts";
-import { parseShsFile, parseShsWorkbook } from "../lib/sf10/import-shs.ts";
-import { fillShs } from "../lib/sf10/export.ts";
+import { parseShsWorkbook } from "../lib/sf10/import-shs.ts";
+import { parseJhsWorkbook } from "../lib/sf10/import-jhs.ts";
+import { detectForm, type Sf10Form } from "../lib/sf10/detect-form.ts";
+import { listSf10Files } from "../lib/import/import-sf10.ts";
+import { fillJhs, fillShs } from "../lib/sf10/export.ts";
 import { fullName, type Sf10Record } from "../lib/sf10/types.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const FOLDER = resolve(process.argv[2] ?? join(ROOT, "sf10-copy"));
-const TEMPLATE = join(ROOT, "templates", "SF10-SHS.xlsx");
+const FOLDER = resolve(process.argv[2] ?? join(ROOT, "sf10-files"));
+const TEMPLATES: Record<Sf10Form, string> = {
+  jhs: join(ROOT, "templates", "SF10-JHS.xlsx"),
+  shs: join(ROOT, "templates", "SF10-SHS.xlsx"),
+};
 
 const diffs: string[] = [];
 const note = (m: string) => diffs.push(m);
@@ -40,16 +45,25 @@ function compare(a: Sf10Record, b: Sf10Record, label: string): void {
 
   a.terms.forEach((t1, i) => {
     const t2 = b.terms[i];
-    const where = `${label}: G${t1.level}S${t1.semester}`;
+    const where = `${label}: G${t1.level}${t1.semester ? `S${t1.semester}` : ""}`;
 
+    /*
+     * The test is NO DATA LOSS, not byte equality.
+     *
+     * The blank templates pre-print things a given real file may leave empty — the school name
+     * on a JHS grade block, the standard learning-area names. A refilled form therefore
+     * legitimately carries more than a sparse original. Only a value the original HAD and the
+     * round trip changed or dropped is a defect.
+     */
     for (const key of ["schoolYear", "section", "trackStrand", "schoolName", "schoolId"] as const) {
-      if ((t1[key] ?? "") !== (t2[key] ?? "")) {
-        note(`${where}.${key}  "${t1[key] ?? ""}" -> "${t2[key] ?? ""}"`);
+      const had = t1[key];
+      if (had && had !== t2[key]) {
+        note(`${where}.${key}  "${had}" -> "${t2[key] ?? ""}"`);
       }
     }
 
-    if (t1.subjects.length !== t2.subjects.length) {
-      note(`${where}: subject count ${t1.subjects.length} -> ${t2.subjects.length}`);
+    if (t2.subjects.length < t1.subjects.length) {
+      note(`${where}: lost subjects, ${t1.subjects.length} -> ${t2.subjects.length}`);
       return;
     }
 
@@ -59,32 +73,55 @@ function compare(a: Sf10Record, b: Sf10Record, label: string): void {
       if ((sub1.category ?? "") !== (sub2.category ?? "")) {
         note(`${where} row ${j} (${sub1.name}): category "${sub1.category ?? ""}" -> "${sub2.category ?? ""}"`);
       }
-      for (const q of ["q1", "q2"] as const) {
+      for (const q of ["q1", "q2", "q3", "q4"] as const) {
         if ((sub1[q] ?? null) !== (sub2[q] ?? null)) {
           note(`${where} row ${j} (${sub1.name}): ${q} ${sub1[q] ?? "-"} -> ${sub2[q] ?? "-"}`);
         }
       }
+      /*
+       * `finalRating` is deliberately NOT compared.
+       *
+       * On JHS the final-rating cells are formulas in the blank template, so the exporter
+       * cannot write them. Where the school pasted a rounded literal over the formula, a
+       * reprint necessarily shows the recomputed value instead. That is a known and accepted
+       * property of reprinting, not data loss on import — the stored value is kept in the
+       * database and is what the app displays.
+       */
     });
   });
 }
 
-const files = readdirSync(FOLDER)
-  .filter((f) => f.toLowerCase().endsWith(".xlsx") && !f.startsWith("~$"))
-  .sort();
+const files = listSf10Files(FOLDER);
 
 console.log(`\nRound-tripping ${files.length} files through fill + re-read\n`);
 
 let checked = 0;
 for (const file of files) {
-  const original = parseShsFile(join(FOLDER, file));
+  let wb: Workbook;
+  let form: Sf10Form;
+  try {
+    wb = Workbook.open(join(FOLDER, file));
+    form = detectForm(wb);
+  } catch {
+    continue; // import:dry reports unreadable files; this script only measures data loss
+  }
+
+  const original = form === "jhs" ? parseJhsWorkbook(wb) : parseShsWorkbook(wb);
   if (original.termCount === 0) continue;
 
   // Fill a fresh template copy from the parsed record, then read that back.
-  const filled = fillShs(TEMPLATE, original.record);
-  const reparsed = parseShsWorkbook(Workbook.fromBuffer(filled.toBuffer()));
+  const filled =
+    form === "jhs"
+      ? fillJhs(TEMPLATES.jhs, original.record)
+      : fillShs(TEMPLATES.shs, original.record);
+  const bytes = filled.toBuffer();
+  const reparsed =
+    form === "jhs"
+      ? parseJhsWorkbook(Workbook.fromBuffer(bytes))
+      : parseShsWorkbook(Workbook.fromBuffer(bytes));
 
   const before = diffs.length;
-  compare(original.record, reparsed.record, fullName(original.record.student));
+  compare(original.record, reparsed.record, `[${form.toUpperCase()}] ${fullName(original.record.student)}`);
   checked++;
 
   const delta = diffs.length - before;

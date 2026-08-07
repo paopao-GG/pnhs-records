@@ -1,9 +1,15 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { runImport, scanFolder, type ScanResult } from "../actions.ts";
+import {
+  browseFolder,
+  runImport,
+  scanFolder,
+  type FolderListing,
+  type ScanResult,
+} from "../actions.ts";
 import type { ImportSummary } from "@/lib/import/import-sf10.ts";
 
 /**
@@ -76,6 +82,12 @@ export function ImportPanel({ defaultFolder }: { defaultFolder: string }) {
 
   const busy = pending || uploading;
 
+  const pickFolder = (path: string) => {
+    setFolder(path);
+    setScan(null);
+    setSummary(null);
+  };
+
   return (
     <>
       <section className="card">
@@ -140,10 +152,15 @@ export function ImportPanel({ defaultFolder }: { defaultFolder: string }) {
       <section className="card">
         <div className="card-head">
           <h3>Or scan a whole folder</h3>
+          <span className="muted" style={{ fontSize: 12.5 }}>
+            Includes subfolders
+          </span>
         </div>
         <div className="card-body">
-          <div className="form-field" style={{ marginBottom: 14 }}>
-            <label htmlFor="folder">Folder containing the .xlsx files</label>
+          <FolderBrowser current={folder} onPick={pickFolder} />
+
+          <div className="form-field" style={{ margin: "14px 0" }}>
+            <label htmlFor="folder">Folder</label>
             <input
               id="folder"
               className="input mono"
@@ -153,7 +170,7 @@ export function ImportPanel({ defaultFolder }: { defaultFolder: string }) {
                 setScan(null);
                 setSummary(null);
               }}
-              placeholder="sf10-copy"
+              placeholder="sf10-files"
               onKeyDown={(e) => e.key === "Enter" && doScan()}
             />
           </div>
@@ -198,6 +215,106 @@ export function ImportPanel({ defaultFolder }: { defaultFolder: string }) {
 
       {summary && <Results summary={summary} />}
     </>
+  );
+}
+
+/**
+ * Click through the folders under the records directory.
+ *
+ * The folders live on the server once this is deployed, so a browser file picker cannot name
+ * them — the server has to list what it can see. Each row shows how many .xlsx files are
+ * inside, including subfolders, so the right one is obvious without opening it.
+ */
+function FolderBrowser({
+  current,
+  onPick,
+}: {
+  current: string;
+  onPick: (path: string) => void;
+}) {
+  const [listing, setListing] = useState<FolderListing | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, startLoading] = useTransition();
+
+  const load = (path: string) => {
+    setError(null);
+    startLoading(async () => {
+      try {
+        setListing(await browseFolder(path));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    });
+  };
+
+  useEffect(() => {
+    load(current);
+    // Only on mount: afterwards navigation is driven by clicks, not by the text field.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (error) return <p style={{ color: "var(--seal)", margin: 0 }}>{error}</p>;
+  if (!listing) return <p className="muted" style={{ margin: 0 }}>Loading folders…</p>;
+
+  const crumbs = listing.path ? listing.path.split("/") : [];
+
+  return (
+    <div className="folder-browser" data-loading={loading}>
+      <div className="crumbs">
+        <button className="crumb" onClick={() => load("")}>
+          records
+        </button>
+        {crumbs.map((c, i) => (
+          <span key={c + i}>
+            <span className="crumb-sep">/</span>
+            <button className="crumb" onClick={() => load(crumbs.slice(0, i + 1).join("/"))}>
+              {c}
+            </button>
+          </span>
+        ))}
+      </div>
+
+      <div className="folder-list">
+        {listing.parent !== null && (
+          <button className="folder-row" onClick={() => load(listing.parent ?? "")}>
+            <span className="folder-name">← up</span>
+          </button>
+        )}
+        {listing.folders.length === 0 && listing.parent === null && (
+          <div className="muted" style={{ padding: "8px 12px", fontSize: 13 }}>
+            No subfolders here.
+          </div>
+        )}
+        {listing.folders.map((f) => (
+          <div key={f.path} className="folder-row">
+            <button className="folder-name" onClick={() => load(f.path)}>
+              {f.name}
+            </button>
+            <span className="muted" style={{ fontSize: 12 }}>
+              {f.fileCount} {f.fileCount === 1 ? "file" : "files"}
+            </span>
+            {f.fileCount > 0 && (
+              <button className="btn folder-use" onClick={() => onPick(f.path)}>
+                Use
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div className="btn-row" style={{ marginTop: 10, alignItems: "center" }}>
+        <button
+          className="btn"
+          onClick={() => onPick(listing.path)}
+          disabled={listing.fileCount === 0}
+        >
+          Use this folder
+        </button>
+        <span className="muted" style={{ fontSize: 12.5 }}>
+          {listing.fileCount} .xlsx {listing.fileCount === 1 ? "file" : "files"} here and below
+        </span>
+      </div>
+    </div>
   );
 }
 

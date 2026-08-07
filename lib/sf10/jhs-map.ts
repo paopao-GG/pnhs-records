@@ -124,6 +124,22 @@ export function jhsFinalRatingIsComputed(subjectIndex: number): boolean {
   return subjectIndex < JHS_COMPUTED_SUBJECT_ROWS;
 }
 
+/**
+ * Only the first EIGHT subject rows count toward the general average.
+ *
+ * The template's formula is `AVERAGE(AJ26:AO33)` — rows 26-33, i.e. Filipino, English,
+ * Mathematics, Science, Araling Panlipunan, EsP, TLE and MAPEH.
+ *
+ * Music, Arts, Physical Education and Health are *components* of MAPEH and are printed as
+ * their own rows, so including them would count MAPEH five times over. Homeroom Guidance and
+ * CAT are excluded too.
+ *
+ * Averaging all thirteen rows instead disagreed with the form on 37 of 85 grade blocks across
+ * the school's real files — differences of one to two marks on the figure that decides
+ * promotion and honours.
+ */
+export const JHS_GENERAL_AVERAGE_SUBJECT_ROWS = 8;
+
 export const JHS_LEARNING_AREAS = [
   "Filipino",
   "English",
