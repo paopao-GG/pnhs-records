@@ -372,6 +372,18 @@ export function deleteStudent(studentId: number): void {
     db.prepare(`DELETE FROM enrollment_terms WHERE student_id = ?`).run(studentId);
     db.prepare(`DELETE FROM jhs_eligibility WHERE student_id = ?`).run(studentId);
     db.prepare(`DELETE FROM shs_eligibility WHERE student_id = ?`).run(studentId);
+
+    // Review flags die with the learner; leaving them would list issues against a record
+    // that no longer exists.
+    db.prepare(`DELETE FROM import_issues WHERE student_id = ?`).run(studentId);
+
+    // The import history row is KEPT - it is the record of when that file came in - but it
+    // must stop claiming to own a learner. `importBytes` treats a row with no live student as
+    // not-yet-imported, which is what lets the file be imported again to restore the record.
+    db.prepare(
+      `UPDATE import_files SET student_id = NULL, status = 'deleted' WHERE student_id = ?`,
+    ).run(studentId);
+
     db.prepare(`DELETE FROM students WHERE id = ?`).run(studentId);
     db.exec("COMMIT");
   } catch (err) {

@@ -19,11 +19,19 @@ are created automatically on first run.
 
 ## Importing
 
-**Import** → type the folder holding the .xlsx files → **Scan folder** → **Import**.
+Two ways in, both under **Import**:
 
-Re-running is safe. Files are identified by content hash, so importing the same folder twice
-imports nothing the second time, and byte-identical duplicates collapse to one learner. A
-re-imported file replaces that learner's SHS terms rather than appending a second copy.
+- **Choose files** — pick one SF10 or several with the file picker.
+- **Or scan a whole folder** — type the folder path, **Scan folder**, then **Import**.
+
+Re-running either is safe. Files are identified by content hash, so importing the same folder
+twice imports nothing the second time, and byte-identical duplicates collapse to one learner.
+A re-imported file replaces that learner's SHS terms rather than appending a second copy.
+
+A file counts as already-imported **only while the learner it produced still exists**. Delete
+a record and re-import its file and the record comes back — the hash on its own is not treated
+as "seen". The same rule means a file that failed to parse can be retried once the reason it
+failed is fixed.
 
 Nothing is ever silently dropped. Records with something odd about them — an LRN that is not
 12 digits, a birthdate the form recorded badly — still import in full, and the problem is

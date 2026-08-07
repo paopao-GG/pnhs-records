@@ -497,6 +497,31 @@ a:hover {
   color: var(--ink-faint);
 }
 
+.file-input {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  color: var(--ink);
+  width: 100%;
+}
+
+.file-input::file-selector-button {
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 8px 15px;
+  margin-right: 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--rule-strong);
+  background: var(--paper-raised);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.file-input::file-selector-button:hover {
+  background: var(--paper-sunken);
+  border-color: var(--ink-faint);
+}
+
 .file-list {
   margin: 0;
   padding: 0;

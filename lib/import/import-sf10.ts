@@ -86,8 +86,24 @@ export function importBytes(bytes: Uint8Array, filename: string): FileResult {
   const db = getDb();
   const sha256 = createHash("sha256").update(bytes).digest("hex");
 
+  /*
+   * A file counts as already-imported only if it produced a learner who STILL EXISTS.
+   *
+   * Matching on the hash alone was a data-loss bug: deleting a learner left this row behind,
+   * so their file was branded "already imported" forever and the record could never be
+   * restored by re-importing. The join is the fix.
+   *
+   * Restricting to successful statuses also lets a file that previously failed to parse be
+   * retried once the reason it failed is fixed.
+   */
   const already = db
-    .prepare(`SELECT id, filename, student_id FROM import_files WHERE sha256 = ?`)
+    .prepare(
+      `SELECT f.id, f.filename, f.student_id
+         FROM import_files f
+         JOIN students s ON s.id = f.student_id
+        WHERE f.sha256 = ?
+          AND f.status IN ('imported', 'updated')`,
+    )
     .get(sha256) as { id: number; filename: string; student_id: number | null } | undefined;
 
   if (already) {
@@ -277,16 +293,36 @@ function recordFile(
   notes: string | null,
 ): number {
   const db = getDb();
+
+  // Upsert, because the row for a hash now outlives the learner it produced: re-importing a
+  // file whose record was deleted must update that row rather than collide with UNIQUE(sha256).
   db.prepare(
     `INSERT INTO import_files (filename, sha256, form, student_id, status, notes)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(sha256) DO UPDATE SET
+       filename    = excluded.filename,
+       form        = excluded.form,
+       student_id  = excluded.student_id,
+       status      = excluded.status,
+       notes       = excluded.notes,
+       imported_at = datetime('now')`,
   ).run(filename, sha256, form, studentId, status, notes);
-  return (db.prepare(`SELECT last_insert_rowid() AS id`).get() as { id: number }).id;
+
+  // last_insert_rowid() is meaningless after DO UPDATE, so look the row up by its hash.
+  return (db.prepare(`SELECT id FROM import_files WHERE sha256 = ?`).get(sha256) as { id: number })
+    .id;
 }
 
 function saveIssues(fileId: number, studentId: number | null, issues: Issue[]): void {
+  const db = getDb();
+
+  // A re-imported file re-raises its own issues, so clear the previous set first rather than
+  // stacking a second copy onto the review list.
+  db.prepare(`DELETE FROM import_issues WHERE import_file_id = ?`).run(fileId);
+
   if (issues.length === 0) return;
-  const stmt = getDb().prepare(
+
+  const stmt = db.prepare(
     `INSERT INTO import_issues
        (import_file_id, student_id, severity, field, cell, raw_value, message)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,

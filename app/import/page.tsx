@@ -26,8 +26,9 @@ export default function ImportPage() {
       </div>
 
       <div className="notice">
-        Point this at a folder of filled SF10 files. Running it again is safe — files already
-        taken in are recognised by content and skipped, so nothing is duplicated.
+        Pick individual SF10 files, or point this at a whole folder. Running either again is
+        safe — a file counts as already imported only while the learner it produced still
+        exists, so deleting a record and re-importing its file brings the record back.
         <br />
         <strong>SHS forms only for now.</strong> JHS import needs a real filled SF10-JHS to
         build against.
