@@ -1,0 +1,30 @@
+{
+  "name": "pnhs-records",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SF10 permanent record system for Pantao National High School",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "spike": "node scripts/spike-fill.ts",
+    "verify": "node scripts/verify-fidelity.ts",
+    "check": "node scripts/check-export.ts",
+    "test": "node scripts/test-grading.ts",
+    "import:dry": "node scripts/import-dry-run.ts",
+    "roundtrip": "node scripts/check-roundtrip.ts"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2",
+    "next": "^15.5.22",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "typescript": "^6.0.3"
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+
+# The records database. Never commit learner data.
+data/
+
+# Generated SF10 files from the spike and export checks.
+spike-output/

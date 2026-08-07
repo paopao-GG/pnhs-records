@@ -1,0 +1,819 @@
+/*
+ * PNHS Records - design system.
+ *
+ * Aesthetic: official record-keeping. Manila-paper warmth, hairline ledger rules, typewriter
+ * numerals, rubber-stamp status marks. It should feel like the filing room it replaces, not
+ * like a startup dashboard.
+ *
+ * Every font is already present on Windows, so the app renders correctly with no network -
+ * which matters because this runs offline on the registrar's PC.
+ */
+
+:root {
+  --font-display: Constantia, Cambria, Georgia, "Times New Roman", serif;
+  --font-ui: Corbel, "Segoe UI", Candara, system-ui, sans-serif;
+  --font-mono: Consolas, "Cascadia Mono", "Courier New", monospace;
+
+  --paper: #f7f4ec;
+  --paper-raised: #fffdf8;
+  --paper-sunken: #efeade;
+
+  --ink: #1b2230;
+  --ink-soft: #4c586b;
+  --ink-faint: #8a93a2;
+
+  --rule: #ddd6c6;
+  --rule-strong: #bdb4a0;
+
+  --official: #1b3f8f;
+  --official-tint: #e9eefa;
+  --seal: #9a2b2b;
+  --seal-tint: #fbeeed;
+  --pass: #1d6440;
+  --gold: #bf911d;
+
+  --shadow-card: 0 1px 2px rgba(27, 34, 48, 0.05), 0 8px 24px -12px rgba(27, 34, 48, 0.18);
+  --radius: 3px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #14171d;
+    --paper-raised: #1c2029;
+    --paper-sunken: #101318;
+
+    --ink: #e9e4d8;
+    --ink-soft: #a6adba;
+    --ink-faint: #6f7887;
+
+    --rule: #2c323d;
+    --rule-strong: #3e4552;
+
+    --official: #7ba1f0;
+    --official-tint: #1a2437;
+    --seal: #e08585;
+    --seal-tint: #2c1d1e;
+    --pass: #6dbd8f;
+    --gold: #d9ad4a;
+
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink);
+  background-color: var(--paper);
+  /* Faint paper grain. Inline SVG so nothing is fetched over the network. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.028'/%3E%3C/svg%3E");
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+a {
+  color: var(--official);
+  text-decoration-color: color-mix(in srgb, var(--official) 35%, transparent);
+  text-underline-offset: 2px;
+}
+
+a:hover {
+  text-decoration-color: currentColor;
+}
+
+/* ---------------------------------------------------------------- masthead */
+
+.masthead {
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper-raised);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+/* Philippine flag colours as an institutional hairline. */
+.masthead::before {
+  content: "";
+  display: block;
+  height: 3px;
+  background: linear-gradient(
+    to right,
+    var(--official) 0 33.33%,
+    var(--seal) 33.33% 66.66%,
+    var(--gold) 66.66% 100%
+  );
+}
+
+.masthead-inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.seal {
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border: 1.5px solid var(--official);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--official);
+}
+
+.masthead h1 {
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.masthead .sub {
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.masthead nav {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+/* ------------------------------------------------------------------ layout */
+
+.page {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 32px 24px 96px;
+}
+
+.page-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+.page-head h2 {
+  font-size: 27px;
+}
+
+.spacer {
+  margin-left: auto;
+}
+
+.eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 600;
+}
+
+.muted {
+  color: var(--ink-soft);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------- cards */
+
+.card {
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  margin-bottom: 22px;
+  animation: rise 0.4s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--rule);
+  background: linear-gradient(var(--paper-sunken), transparent);
+}
+
+.card-head h3 {
+  font-size: 16px;
+}
+
+.card-body {
+  padding: 18px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    animation: none;
+  }
+}
+
+/* ------------------------------------------------------------- definitions */
+
+/*
+ * Ruled with per-cell borders rather than a 1px grid gap over a coloured background: when
+ * the last row is not full, the gap technique leaves a bare block of rule colour.
+ */
+.fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.field {
+  padding: 9px 13px;
+  border-right: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+
+.field dt {
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 600;
+}
+
+.field dd {
+  margin: 2px 0 0;
+  font-size: 15px;
+}
+
+.field dd:empty::after {
+  content: "—";
+  color: var(--ink-faint);
+}
+
+/* ------------------------------------------------------------------ tables */
+
+.ledger {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.ledger th {
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 600;
+  text-align: left;
+  padding: 7px 10px;
+  border-bottom: 1.5px solid var(--rule-strong);
+  white-space: nowrap;
+}
+
+.ledger td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.ledger tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.ledger tbody tr:hover td {
+  background: var(--official-tint);
+}
+
+.ledger .num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  width: 58px;
+}
+
+.ledger .subject {
+  min-width: 210px;
+}
+
+.ledger .final {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  width: 64px;
+  font-weight: 700;
+  background: var(--paper-sunken);
+}
+
+.ledger tfoot td {
+  border-top: 1.5px solid var(--rule-strong);
+  padding: 9px 10px;
+  font-weight: 600;
+}
+
+.grade-fail {
+  color: var(--seal);
+  font-weight: 700;
+}
+
+.cat-tag {
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  border: 1px solid var(--rule-strong);
+  border-radius: 2px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+/* ------------------------------------------------------------------ stamps */
+
+/*
+ * The memorable detail: promotion status reads as a rubber stamp pressed onto the record.
+ */
+.stamp {
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding: 4px 11px;
+  border: 2px solid currentColor;
+  border-radius: 2px;
+  transform: rotate(-1.6deg);
+  opacity: 0.86;
+  white-space: nowrap;
+  color: var(--pass);
+}
+
+.stamp[data-tone="fail"] {
+  color: var(--seal);
+}
+
+.stamp[data-tone="none"] {
+  color: var(--ink-faint);
+  border-style: dashed;
+  opacity: 0.7;
+}
+
+.chip {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--official-tint);
+  color: var(--official);
+  white-space: nowrap;
+}
+
+/* ----------------------------------------------------------------- buttons */
+
+.btn {
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 8px 15px;
+  border-radius: var(--radius);
+  border: 1px solid var(--rule-strong);
+  background: var(--paper-raised);
+  color: var(--ink);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  transition: background 0.14s, border-color 0.14s, transform 0.06s;
+}
+
+.btn:hover {
+  background: var(--paper-sunken);
+  border-color: var(--ink-faint);
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn[data-variant="primary"] {
+  background: var(--official);
+  border-color: var(--official);
+  color: #fff;
+}
+
+.btn[data-variant="primary"]:hover {
+  background: color-mix(in srgb, var(--official) 85%, black);
+}
+
+@media (prefers-color-scheme: dark) {
+  .btn[data-variant="primary"] {
+    color: #0f1319;
+  }
+}
+
+.btn[data-variant="danger"] {
+  border-color: color-mix(in srgb, var(--seal) 45%, transparent);
+  color: var(--seal);
+}
+
+.btn[data-variant="danger"]:hover:not(:disabled) {
+  background: var(--seal-tint);
+  border-color: var(--seal);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ------------------------------------------------------------ import page */
+
+.chip[data-tone="pass"] {
+  background: color-mix(in srgb, var(--pass) 14%, transparent);
+  color: var(--pass);
+}
+
+.chip[data-tone="fail"] {
+  background: var(--seal-tint);
+  color: var(--seal);
+}
+
+.chip[data-tone="warn"] {
+  background: color-mix(in srgb, var(--gold) 18%, transparent);
+  color: color-mix(in srgb, var(--gold) 75%, var(--ink));
+}
+
+.chip[data-tone="muted"] {
+  background: var(--paper-sunken);
+  color: var(--ink-faint);
+}
+
+.file-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--paper);
+}
+
+.file-list li {
+  padding: 5px 12px;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.file-list li:last-child {
+  border-bottom: none;
+}
+
+.tally {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.tally-item {
+  flex: 1 1 120px;
+  background: var(--paper-raised);
+  padding: 12px 16px;
+}
+
+.tally-n {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.tally-item[data-tone="pass"] .tally-n { color: var(--pass); }
+.tally-item[data-tone="fail"] .tally-n { color: var(--seal); }
+.tally-item[data-tone="warn"] .tally-n { color: var(--gold); }
+.tally-item[data-tone="info"] .tally-n { color: var(--official); }
+.tally-item[data-tone="muted"] .tally-n { color: var(--ink-faint); }
+
+.tally-label {
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.issue-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.issue-list li {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: 14px;
+}
+
+.issue-list li:last-child {
+  border-bottom: none;
+}
+
+.issue-list li > div {
+  flex: 1;
+}
+
+.issue-badge {
+  display: inline-block;
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 2px;
+  margin-right: 9px;
+  background: color-mix(in srgb, var(--gold) 20%, transparent);
+  color: color-mix(in srgb, var(--gold) 75%, var(--ink));
+}
+
+.issue-badge[data-severity="error"] {
+  background: var(--seal-tint);
+  color: var(--seal);
+}
+
+.issue-cell {
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  margin-left: 9px;
+}
+
+/* ------------------------------------------------------------ danger zone */
+
+.danger-zone {
+  border: 1px solid color-mix(in srgb, var(--seal) 40%, transparent);
+  background: var(--seal-tint);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  margin-top: 22px;
+}
+
+.danger-zone h3 {
+  font-size: 16px;
+  color: var(--seal);
+  margin-bottom: 6px;
+}
+
+.danger-zone p {
+  margin: 0 0 14px;
+  font-size: 14px;
+  max-width: 62ch;
+}
+
+.danger-zone label {
+  display: block;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  font-weight: 600;
+  margin-bottom: 5px;
+}
+
+/* ------------------------------------------------------------------ inputs */
+
+.input,
+.select {
+  font-family: var(--font-ui);
+  font-size: 14.5px;
+  color: var(--ink);
+  background: var(--paper-raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  padding: 8px 11px;
+  width: 100%;
+}
+
+.input:focus,
+.select:focus,
+.grade-input:focus {
+  outline: 2px solid var(--official);
+  outline-offset: -1px;
+  border-color: var(--official);
+}
+
+.search-bar {
+  position: relative;
+  margin-bottom: 20px;
+}
+
+.search-bar .input {
+  font-size: 17px;
+  padding: 13px 16px 13px 44px;
+  font-family: var(--font-display);
+}
+
+.search-bar::before {
+  content: "";
+  position: absolute;
+  left: 17px;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  margin-top: -8px;
+  border: 2px solid var(--ink-faint);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.search-bar::after {
+  content: "";
+  position: absolute;
+  left: 30px;
+  top: 50%;
+  width: 7px;
+  height: 2px;
+  background: var(--ink-faint);
+  transform: rotate(45deg);
+  margin-top: 4px;
+  pointer-events: none;
+}
+
+.grade-input {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  text-align: center;
+  width: 52px;
+  padding: 5px 2px;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.grade-input::-webkit-outer-spin-button,
+.grade-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.grade-input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+}
+
+.form-field label {
+  display: block;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+/* ----------------------------------------------------------- search result */
+
+.results {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.result {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--rule);
+  text-decoration: none;
+  color: inherit;
+}
+
+.result:last-child {
+  border-bottom: none;
+}
+
+.result:hover {
+  background: var(--official-tint);
+}
+
+.result-name {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.result-lrn {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+
+.result .spacer {
+  margin-left: auto;
+}
+
+.count-line {
+  font-size: 12.5px;
+  color: var(--ink-faint);
+  margin: 0 0 10px;
+  letter-spacing: 0.03em;
+}
+
+.empty {
+  padding: 44px 20px;
+  text-align: center;
+  color: var(--ink-faint);
+}
+
+mark {
+  background: color-mix(in srgb, var(--gold) 32%, transparent);
+  color: inherit;
+  border-radius: 2px;
+}
+
+/* ------------------------------------------------------------------ footer */
+
+.foot {
+  border-top: 1px solid var(--rule);
+  margin-top: 40px;
+  padding-top: 14px;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.notice {
+  border-left: 3px solid var(--gold);
+  background: color-mix(in srgb, var(--gold) 8%, transparent);
+  padding: 10px 14px;
+  font-size: 13px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  margin-bottom: 22px;
+}
