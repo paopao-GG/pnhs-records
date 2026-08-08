@@ -190,7 +190,14 @@ export function parseGrade(
 ): Normalised<number | undefined> {
   if (raw === null || raw === undefined || String(raw).trim() === "") return ok(undefined);
 
-  const n = typeof raw === "number" ? raw : Number(String(raw).trim());
+  /*
+   * Brackets around a number are notation, not meaning: `[1.2]` and `(1.2)` appear in Form
+   * 137's Units Earned column, paired with an asterisk on the subject name as a footnote
+   * marker. They are NOT accounting negatives — 143 of the 144 bracketed values across the
+   * school's files sit against "Passed". So the number is taken at face value.
+   */
+  const text = typeof raw === "number" ? String(raw) : String(raw).trim().replace(/^[[(](.*)[\])]$/, "$1").trim();
+  const n = typeof raw === "number" ? raw : Number(text);
   if (!Number.isFinite(n)) {
     return {
       value: undefined,

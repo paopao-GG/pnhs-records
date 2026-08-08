@@ -28,6 +28,14 @@ export interface StudentRow {
   name_ext: string | null;
   sex: "M" | "F" | null;
   birthdate: string | null;
+  /** 1 when `lrn` is a generated marker (Form 137 predates the LRN system). */
+  lrn_placeholder: number | null;
+  birthplace_province: string | null;
+  birthplace_town: string | null;
+  birthplace_barrio: string | null;
+  guardian_name: string | null;
+  guardian_occupation: string | null;
+  guardian_address: string | null;
 }
 
 export interface TermRow {
@@ -47,6 +55,8 @@ export interface TermRow {
   promotion_remark: string | null;
   /** As the source form carried it; null for records encoded in the app. */
   general_average: number | null;
+  /** 'k12' or 'old' (Form 137's First-Fourth Year). */
+  curriculum: string | null;
 }
 
 export interface SubjectRow {
@@ -61,6 +71,9 @@ export interface SubjectRow {
   q4: number | null;
   final_rating: number | null;
   remarks: string | null;
+  /** Form 137 only. */
+  units_earned: number | null;
+  extra_curricular: string | null;
 }
 
 /** One row per student for the search index - small enough to ship to the browser whole. */
@@ -104,6 +117,38 @@ export function getTerms(studentId: number): TermRow[] {
   return plainAll<TermRow>(rows);
 }
 
+export interface AttendanceRow {
+  month: string;
+  days_of_school: number | null;
+  days_present: number | null;
+}
+
+/** Form 137 only; SF10 records no attendance. */
+export function getAttendance(termId: number): AttendanceRow[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT month, days_of_school, days_present
+         FROM term_attendance WHERE term_id = ? ORDER BY ordinal`,
+    )
+    .all(termId);
+  return plainAll<AttendanceRow>(rows);
+}
+
+/** The stored copy of the file a learner's record was imported from, if there is one. */
+export function getOriginalFile(
+  studentId: number,
+): { filename: string; stored_path: string } | null {
+  const row = getDb()
+    .prepare(
+      `SELECT filename, stored_path
+         FROM import_files
+        WHERE student_id = ? AND stored_path IS NOT NULL
+        ORDER BY id DESC LIMIT 1`,
+    )
+    .get(studentId);
+  return row ? plain<{ filename: string; stored_path: string }>(row) : null;
+}
+
 export function getSubjects(termId: number): SubjectRow[] {
   const rows = getDb()
     .prepare(`SELECT * FROM term_subjects WHERE term_id = ? ORDER BY ordinal`)
@@ -128,12 +173,25 @@ export function getSchoolSettings(): Record<string, string> {
   return Object.fromEntries(rows.map((r) => [r.key, r.value]));
 }
 
-/** Grade levels 7-10 print on the JHS form, 11-12 on the SHS form. */
+/**
+ * Which SF10 forms this learner can be printed on.
+ *
+ * Grade levels 7-10 print on the JHS form, 11-12 on the SHS form — **but only for the K-12
+ * curriculum.** Form 137 records reuse levels 7-10 for First-Fourth Year, so without the
+ * `curriculum` check a 1995 record would be offered a 2017 DepEd form, asserting a curriculum
+ * the learner never studied. Those learners get the original document instead.
+ */
 export function availableForms(terms: TermRow[]): ("jhs" | "shs")[] {
+  const modern = terms.filter((t) => (t.curriculum ?? "k12") !== "old");
   const forms: ("jhs" | "shs")[] = [];
-  if (terms.some((t) => t.level <= 10)) forms.push("jhs");
-  if (terms.some((t) => t.level >= 11)) forms.push("shs");
+  if (modern.some((t) => t.level <= 10)) forms.push("jhs");
+  if (modern.some((t) => t.level >= 11)) forms.push("shs");
   return forms;
+}
+
+/** True when any of the learner's terms come from the pre-K-12 Form 137. */
+export function hasOldCurriculum(terms: TermRow[]): boolean {
+  return terms.some((t) => t.curriculum === "old");
 }
 
 // ---------------------------------------------------------------------------

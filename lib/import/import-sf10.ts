@@ -14,13 +14,24 @@
  */
 
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { extname, join } from "node:path";
 import { getDb } from "../db/index.ts";
 import { Workbook } from "../xlsx/workbook.ts";
 import { parseShsWorkbook, NotAnShsFormError } from "../sf10/import-shs.ts";
 import { parseJhsWorkbook, NotAJhsFormError } from "../sf10/import-jhs.ts";
-import { detectForm, UnknownFormError, type Sf10Form } from "../sf10/detect-form.ts";
+import {
+  parseF137Bytes,
+  NotAForm137Error,
+  type AttendanceRecord,
+} from "../sf10/import-f137.ts";
+import { NotADocxError } from "../docx/reader.ts";
+import {
+  detectByBytes,
+  levelsOwnedBy,
+  UnknownFormError,
+  type Sf10Form,
+} from "../sf10/detect-form.ts";
 import type { Issue } from "../sf10/normalise.ts";
 import type { Sf10Record } from "../sf10/types.ts";
 
@@ -61,7 +72,9 @@ export function listSf10Files(folder: string): string[] {
   return readdirSync(folder, { recursive: true, encoding: "utf8" })
     .filter((f) => {
       const base = f.split(/[\\/]/).pop() ?? f;
-      return f.toLowerCase().endsWith(".xlsx") && !base.startsWith("~$");
+      const lower = f.toLowerCase();
+      // .xlsx is SF10 (both variants); .docx is Form 137.
+      return (lower.endsWith(".xlsx") || lower.endsWith(".docx")) && !base.startsWith("~$");
     })
     .sort();
 }
@@ -133,18 +146,27 @@ export function importBytes(bytes: Uint8Array, filename: string): FileResult {
   // Which form this is decides the parser, the grade levels it owns, and what a re-import
   // replaces. Detected from the workbook itself rather than the filename, which is unreliable.
   let form: Sf10Form;
-  let parsed;
+  let parsed: { record: Sf10Record; issues: Issue[]; termCount: number; subjectCount: number };
+  let attendance: AttendanceRecord[][] = [];
   try {
-    const wb = Workbook.fromBuffer(bytes);
-    form = detectForm(wb);
-    parsed = form === "jhs" ? parseJhsWorkbook(wb) : parseShsWorkbook(wb);
+    form = detectByBytes(bytes);
+    if (form === "f137") {
+      const f = parseF137Bytes(bytes);
+      parsed = f;
+      attendance = f.attendance;
+    } else {
+      const wb = Workbook.fromBuffer(bytes);
+      parsed = form === "jhs" ? parseJhsWorkbook(wb) : parseShsWorkbook(wb);
+    }
   } catch (err) {
     const message =
       err instanceof UnknownFormError ||
       err instanceof NotAnShsFormError ||
-      err instanceof NotAJhsFormError
+      err instanceof NotAJhsFormError ||
+      err instanceof NotAForm137Error ||
+      err instanceof NotADocxError
         ? err.message
-        : `Could not read this workbook: ${err instanceof Error ? err.message : String(err)}`;
+        : `Could not read this file: ${err instanceof Error ? err.message : String(err)}`;
     recordFile(sha256, filename, "unknown", null, "failed", message);
     return { filename, status: "failed", issues: [], error: message };
   }
@@ -163,10 +185,14 @@ export function importBytes(bytes: Uint8Array, filename: string): FileResult {
     .prepare(`SELECT id FROM students WHERE lrn = ?`)
     .get(record.student.lrn) as { id: number } | undefined;
 
-  const studentId = writeRecord(record, form, existing?.id);
+  const studentId = writeRecord(record, form, attendance, existing?.id);
   const status: ImportStatus = existing ? "updated" : "imported";
 
-  const fileId = recordFile(sha256, filename, form, studentId, status, null);
+  // Keep the original. For Form 137 it is the only reissuable artefact — the record cannot be
+  // reprinted onto a modern SF10 — and for SF10 it makes a future re-parse possible without
+  // asking the registrar for files again.
+  const storedPath = storeOriginal(bytes, filename, sha256);
+  const fileId = recordFile(sha256, filename, form, studentId, status, null, storedPath);
   saveIssues(fileId, studentId, issues);
 
   return {
@@ -189,10 +215,15 @@ export function importBytes(bytes: Uint8Array, filename: string): FileResult {
  * 11-12 alone; an SHS form does the reverse. That is what lets a learner who attended both
  * exist as one record built from two files, in either import order.
  */
-function writeRecord(record: Sf10Record, form: Sf10Form, existingId?: number): number {
+function writeRecord(
+  record: Sf10Record,
+  form: Sf10Form,
+  attendance: AttendanceRecord[][],
+  existingId?: number,
+): number {
   const db = getDb();
   const s = record.student;
-  const levelClause = form === "jhs" ? "level <= 10" : "level >= 11";
+  const levelClause = levelsOwnedBy(form);
 
   db.exec("BEGIN");
   try {
@@ -203,7 +234,10 @@ function writeRecord(record: Sf10Record, form: Sf10Form, existingId?: number): n
       db.prepare(
         `UPDATE students
             SET last_name = ?, first_name = ?, middle_name = ?, name_ext = ?,
-                sex = ?, birthdate = ?, updated_at = datetime('now')
+                sex = ?, birthdate = ?, lrn_placeholder = ?,
+                birthplace_province = ?, birthplace_town = ?, birthplace_barrio = ?,
+                guardian_name = ?, guardian_occupation = ?, guardian_address = ?,
+                updated_at = datetime('now')
           WHERE id = ?`,
       ).run(
         s.lastName,
@@ -212,12 +246,22 @@ function writeRecord(record: Sf10Record, form: Sf10Form, existingId?: number): n
         s.nameExt ?? null,
         s.sex ?? null,
         s.birthdate ?? null,
+        s.lrnPlaceholder ? 1 : 0,
+        s.birthplaceProvince ?? null,
+        s.birthplaceTown ?? null,
+        s.birthplaceBarrio ?? null,
+        s.guardianName ?? null,
+        s.guardianOccupation ?? null,
+        s.guardianAddress ?? null,
         studentId,
       );
     } else {
       db.prepare(
-        `INSERT INTO students (lrn, last_name, first_name, middle_name, name_ext, sex, birthdate)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO students
+           (lrn, last_name, first_name, middle_name, name_ext, sex, birthdate, lrn_placeholder,
+            birthplace_province, birthplace_town, birthplace_barrio,
+            guardian_name, guardian_occupation, guardian_address)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         s.lrn,
         s.lastName,
@@ -226,6 +270,13 @@ function writeRecord(record: Sf10Record, form: Sf10Form, existingId?: number): n
         s.nameExt ?? null,
         s.sex ?? null,
         s.birthdate ?? null,
+        s.lrnPlaceholder ? 1 : 0,
+        s.birthplaceProvince ?? null,
+        s.birthplaceTown ?? null,
+        s.birthplaceBarrio ?? null,
+        s.guardianName ?? null,
+        s.guardianOccupation ?? null,
+        s.guardianAddress ?? null,
       );
       studentId = (db.prepare(`SELECT last_insert_rowid() AS id`).get() as { id: number }).id;
     }
@@ -244,19 +295,25 @@ function writeRecord(record: Sf10Record, form: Sf10Form, existingId?: number): n
     const insTerm = db.prepare(
       `INSERT INTO enrollment_terms
          (student_id, level, semester, school_year, section, adviser, track_strand,
-          school_name, school_id, district, division, region, promotion_remark, general_average)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          school_name, school_id, district, division, region, promotion_remark, general_average,
+          curriculum)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const insAttendance = db.prepare(
+      `INSERT INTO term_attendance (term_id, ordinal, month, days_of_school, days_present)
+       VALUES (?, ?, ?, ?, ?)`,
     );
     // All four quarters: SHS uses only q1/q2 and leaves the rest null, JHS uses all four.
     // `final_rating` is stored only where the template has no formula for it - JHS Homeroom
     // Guidance and CAT - and the parser supplies it for exactly those rows.
     const insSubject = db.prepare(
       `INSERT INTO term_subjects
-         (term_id, ordinal, subject_name, category, q1, q2, q3, q4, final_rating, remarks)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (term_id, ordinal, subject_name, category, q1, q2, q3, q4, final_rating, remarks,
+          units_earned, extra_curricular)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
 
-    for (const term of record.terms) {
+    record.terms.forEach((term, termIndex) => {
       insTerm.run(
         studentId,
         term.level,
@@ -272,6 +329,7 @@ function writeRecord(record: Sf10Record, form: Sf10Form, existingId?: number): n
         term.region ?? null,
         term.promotionRemark ?? null,
         term.generalAverage ?? null,
+        term.curriculum ?? "k12",
       );
       const termId = (db.prepare(`SELECT last_insert_rowid() AS id`).get() as { id: number }).id;
       term.subjects.forEach((sub, i) =>
@@ -286,9 +344,16 @@ function writeRecord(record: Sf10Record, form: Sf10Form, existingId?: number): n
           sub.q4 ?? null,
           sub.finalRating ?? null,
           sub.remarks ?? null,
+          sub.unitsEarned ?? null,
+          sub.extraCurricular ?? null,
         ),
       );
-    }
+
+      // Form 137 only; SF10 does not record attendance.
+      (attendance[termIndex] ?? []).forEach((a, i) =>
+        insAttendance.run(termId, i, a.month, a.daysOfSchool ?? null, a.daysPresent ?? null),
+      );
+    });
 
     const el = record.shsEligibility;
     if (el) {
@@ -353,6 +418,26 @@ function toNumber(v: number | string | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * Keep a copy of the imported file, named by its content hash.
+ *
+ * Hash-named so re-importing the same bytes overwrites rather than accumulating, and so the
+ * copy is findable from `import_files.sha256` alone. Returns the path relative to the project
+ * root; a failure to store is not fatal, since the record itself imported fine.
+ */
+function storeOriginal(bytes: Uint8Array, filename: string, sha256: string): string | null {
+  try {
+    const dir = join(process.cwd(), "data", "originals");
+    mkdirSync(dir, { recursive: true });
+    const ext = extname(filename).toLowerCase() || ".bin";
+    const rel = join("data", "originals", `${sha256}${ext}`);
+    writeFileSync(join(process.cwd(), rel), bytes);
+    return rel.split(/[\\/]/).join("/");
+  } catch {
+    return null;
+  }
+}
+
 function recordFile(
   sha256: string,
   filename: string,
@@ -360,22 +445,24 @@ function recordFile(
   studentId: number | null,
   status: string,
   notes: string | null,
+  storedPath: string | null = null,
 ): number {
   const db = getDb();
 
   // Upsert, because the row for a hash now outlives the learner it produced: re-importing a
   // file whose record was deleted must update that row rather than collide with UNIQUE(sha256).
   db.prepare(
-    `INSERT INTO import_files (filename, sha256, form, student_id, status, notes)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO import_files (filename, sha256, form, student_id, status, notes, stored_path)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(sha256) DO UPDATE SET
        filename    = excluded.filename,
        form        = excluded.form,
        student_id  = excluded.student_id,
        status      = excluded.status,
        notes       = excluded.notes,
+       stored_path = COALESCE(excluded.stored_path, import_files.stored_path),
        imported_at = datetime('now')`,
-  ).run(filename, sha256, form, studentId, status, notes);
+  ).run(filename, sha256, form, studentId, status, notes, storedPath);
 
   // last_insert_rowid() is meaningless after DO UPDATE, so look the row up by its hash.
   return (db.prepare(`SELECT id FROM import_files WHERE sha256 = ?`).get(sha256) as { id: number })

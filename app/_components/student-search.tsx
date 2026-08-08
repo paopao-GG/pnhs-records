@@ -119,7 +119,14 @@ export function StudentSearch({ students }: { students: StudentSummary[] }) {
                   <Highlight text={displayName(s)} query={query} />
                 </div>
                 <div className="result-lrn">
-                  LRN <Highlight text={s.lrn} query={query} />
+                  {s.lrn.startsWith("F137-") ? (
+                    // A generated marker, not a real number — see import-f137.ts.
+                    <span>No LRN · pre-2011 record</span>
+                  ) : (
+                    <>
+                      LRN <Highlight text={s.lrn} query={query} />
+                    </>
+                  )}
                 </div>
               </div>
               <div className="spacer" />

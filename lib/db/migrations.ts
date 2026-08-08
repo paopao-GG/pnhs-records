@@ -51,6 +51,38 @@ export const MIGRATIONS: Migration[] = [
       addColumnIfMissing(db, "enrollment_terms", "general_average", "REAL");
     },
   },
+  {
+    version: 2,
+    name: "form137 fields",
+    up: (db) => {
+      /*
+       * Form 137 — the pre-K-12 Secondary Student's Permanent Record — carries data the SF10
+       * schema has no home for.
+       *
+       * `lrn_placeholder` marks a generated identifier. These records predate the LRN system
+       * entirely, so the value in `lrn` is ours, not the learner's, and the UI must never
+       * present it as a real one.
+       *
+       * `curriculum` distinguishes First-Fourth Year from Grade 7-10. It is load-bearing:
+       * availableForms() decides print buttons from grade level alone, so without it a 1995
+       * record would be offered a modern SF10 print.
+       */
+      addColumnIfMissing(db, "students", "lrn_placeholder", "INTEGER NOT NULL DEFAULT 0");
+      addColumnIfMissing(db, "students", "birthplace_province", "TEXT");
+      addColumnIfMissing(db, "students", "birthplace_town", "TEXT");
+      addColumnIfMissing(db, "students", "birthplace_barrio", "TEXT");
+      addColumnIfMissing(db, "students", "guardian_name", "TEXT");
+      addColumnIfMissing(db, "students", "guardian_occupation", "TEXT");
+      addColumnIfMissing(db, "students", "guardian_address", "TEXT");
+
+      addColumnIfMissing(db, "enrollment_terms", "curriculum", "TEXT NOT NULL DEFAULT 'k12'");
+
+      addColumnIfMissing(db, "term_subjects", "units_earned", "REAL");
+      addColumnIfMissing(db, "term_subjects", "extra_curricular", "TEXT");
+
+      addColumnIfMissing(db, "import_files", "stored_path", "TEXT");
+    },
+  },
 ];
 
 /**

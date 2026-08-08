@@ -12,7 +12,8 @@ import { join, resolve } from "node:path";
 import { listSf10Files } from "../lib/import/import-sf10.ts";
 import { parseShsWorkbook } from "../lib/sf10/import-shs.ts";
 import { parseJhsWorkbook } from "../lib/sf10/import-jhs.ts";
-import { detectForm } from "../lib/sf10/detect-form.ts";
+import { parseF137Bytes } from "../lib/sf10/import-f137.ts";
+import { detectByBytes } from "../lib/sf10/detect-form.ts";
 import { Workbook } from "../lib/xlsx/workbook.ts";
 import { fullName } from "../lib/sf10/types.ts";
 
@@ -45,10 +46,14 @@ for (const file of files) {
   seenHashes.set(hash, file);
 
   try {
-    const wb = Workbook.open(path);
-    const form = detectForm(wb);
+    const bytes = readFileSync(path);
+    const form = detectByBytes(bytes);
     const { record, issues, termCount, subjectCount } =
-      form === "jhs" ? parseJhsWorkbook(wb) : parseShsWorkbook(wb);
+      form === "f137"
+        ? parseF137Bytes(bytes)
+        : form === "jhs"
+          ? parseJhsWorkbook(Workbook.fromBuffer(bytes))
+          : parseShsWorkbook(Workbook.fromBuffer(bytes));
     parsed++;
     byForm[form] = (byForm[form] ?? 0) + 1;
 

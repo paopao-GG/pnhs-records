@@ -89,6 +89,15 @@ export function buildSf10Record(
   const wanted = levels && levels.length > 0 ? new Set(levels) : null;
 
   const terms = getTerms(studentId)
+    /*
+     * Old-curriculum terms can never go on an SF10.
+     *
+     * Form 137 reuses levels 7-10 for First-Fourth Year, so a level filter alone would let a
+     * 1995 record onto a 2017 DepEd form. The UI already hides the button, but this is the
+     * guard that matters: the print endpoint is reachable by URL, and hiding a control is not
+     * the same as refusing the action.
+     */
+    .filter((t) => (t.curriculum ?? "k12") !== "old")
     .filter((t) => (form === "jhs" ? t.level <= 10 : t.level >= 11))
     .filter((t) => !wanted || wanted.has(t.level))
     .map(toTerm);

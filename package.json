@@ -11,11 +11,13 @@
     "spike": "node scripts/spike-fill.ts",
     "verify": "node scripts/verify-fidelity.ts",
     "check": "node scripts/check-export.ts",
-    "test": "node scripts/test-grading.ts && node scripts/test-migrations.ts",
+    "test": "node scripts/test-grading.ts && node scripts/test-migrations.ts && node scripts/test-f137.ts",
     "import:dry": "node scripts/import-dry-run.ts",
     "roundtrip": "node scripts/check-roundtrip.ts",
     "test:migrations": "node scripts/test-migrations.ts",
-    "check:ga": "node scripts/check-general-average.ts"
+    "check:ga": "node scripts/check-general-average.ts",
+    "test:f137": "node scripts/test-f137.ts",
+    "reimport:f137": "node scripts/reimport-f137.ts"
   },
   "dependencies": {
     "fflate": "^0.8.2",

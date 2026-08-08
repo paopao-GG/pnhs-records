@@ -3,10 +3,14 @@ import { notFound } from "next/navigation";
 import {
   availableForms,
   countIssuesForStudent,
+  getAttendance,
   getDeletionSummary,
+  getOriginalFile,
   getStudent,
   getSubjects,
   getTerms,
+  hasOldCurriculum,
+  type AttendanceRow,
   type SubjectRow,
   type TermRow,
 } from "@/lib/db/queries.ts";
@@ -17,8 +21,19 @@ import { jhsFinalRatingIsComputed } from "@/lib/sf10/jhs-map.ts";
 
 export const dynamic = "force-dynamic";
 
+/** Old-curriculum terms are named as the source document names them, not as Grade 7-10. */
+const OLD_YEAR_LABEL: Record<number, string> = {
+  7: "First Year",
+  8: "Second Year",
+  9: "Third Year",
+  10: "Fourth Year",
+};
+
 function termLabel(t: TermRow): string {
-  return t.semester ? `Grade ${t.level} · ${t.semester === 1 ? "First" : "Second"} Semester` : `Grade ${t.level}`;
+  if (t.curriculum === "old") return OLD_YEAR_LABEL[t.level] ?? `Year ${t.level - 6}`;
+  return t.semester
+    ? `Grade ${t.level} · ${t.semester === 1 ? "First" : "Second"} Semester`
+    : `Grade ${t.level}`;
 }
 
 /**
@@ -56,9 +71,59 @@ function Grade({ value }: { value: number | null }) {
   return <span className={isPassing(value) ? undefined : "grade-fail"}>{value}</span>;
 }
 
+/** Monthly attendance, recorded by Form 137 and by nothing else. */
+function Attendance({ rows }: { rows: AttendanceRow[] }) {
+  const sum = (pick: (r: AttendanceRow) => number | null) =>
+    rows.reduce((n, r) => n + (pick(r) ?? 0), 0);
+
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div className="eyebrow" style={{ marginBottom: 8 }}>
+        Attendance
+      </div>
+      <div className="table-scroll">
+        <table className="ledger">
+          <thead>
+            <tr>
+              <th />
+              {rows.map((r, i) => (
+                <th key={i} className="num">
+                  {r.month}
+                </th>
+              ))}
+              <th className="final">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(
+              [
+                ["Days of School", (r: AttendanceRow) => r.days_of_school],
+                ["Days Present", (r: AttendanceRow) => r.days_present],
+              ] as const
+            ).map(([label, pick]) => (
+              <tr key={label}>
+                <td className="subject">{label}</td>
+                {rows.map((r, i) => (
+                  <td key={i} className="num">
+                    {pick(r) ?? <span className="muted">—</span>}
+                  </td>
+                ))}
+                <td className="final">{sum(pick)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function TermCard({ term, index }: { term: TermRow; index: number }) {
+  const isOld = term.curriculum === "old";
   const isJhs = term.level <= 10;
   const subjects = getSubjects(term.id);
+  const attendance = isOld ? getAttendance(term.id) : [];
+  const showUnits = subjects.some((s) => s.units_earned != null);
   const resolved = subjects.map((s, i) => resolveFinal(s, i, isJhs));
   const finals = resolved.map((r) => r.display);
 
@@ -84,9 +149,13 @@ function TermCard({ term, index }: { term: TermRow; index: number }) {
           {term.school_year ?? "—"}
         </span>
         <div className="spacer" />
-        <span className="stamp" data-tone={passing === null ? "none" : passing ? "pass" : "fail"}>
-          {term.promotion_remark ?? "Incomplete"}
-        </span>
+        {/* Old records carry Action Taken per subject rather than a promotion remark for the
+            year, so a stamp is only shown when the document actually has one. */}
+        {(term.promotion_remark || !isOld) && (
+          <span className="stamp" data-tone={passing === null ? "none" : passing ? "pass" : "fail"}>
+            {term.promotion_remark ?? "Incomplete"}
+          </span>
+        )}
       </div>
 
       <div className="card-body">
@@ -107,6 +176,8 @@ function TermCard({ term, index }: { term: TermRow; index: number }) {
                 {isJhs && <th className="num">Q3</th>}
                 {isJhs && <th className="num">Q4</th>}
                 <th className="final">Final</th>
+                {showUnits && <th className="num">Units</th>}
+                {isOld && <th>Action</th>}
               </tr>
             </thead>
             <tbody>
@@ -139,6 +210,16 @@ function TermCard({ term, index }: { term: TermRow; index: number }) {
                   <td className="final">
                     <Grade value={finals[i]} />
                   </td>
+                  {showUnits && (
+                    <td className="num mono">
+                      {s.units_earned ?? <span className="muted">—</span>}
+                    </td>
+                  )}
+                  {isOld && (
+                    <td style={{ fontSize: 13 }}>
+                      {s.remarks ?? <span className="muted">—</span>}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -156,10 +237,14 @@ function TermCard({ term, index }: { term: TermRow; index: number }) {
                 <td className="final">
                   <Grade value={genAve} />
                 </td>
+                {showUnits && <td />}
+                {isOld && <td />}
               </tr>
             </tfoot>
           </table>
         </div>
+
+        {attendance.length > 0 && <Attendance rows={attendance} />}
       </div>
     </section>
   );
@@ -174,6 +259,8 @@ export default async function StudentPage({ params }: { params: Promise<{ id: st
   const terms = getTerms(studentId);
   const forms = availableForms(terms);
   const issueCount = countIssuesForStudent(studentId);
+  const isOldRecord = hasOldCurriculum(terms);
+  const original = getOriginalFile(studentId);
 
   // Only offer levels the learner actually has, per form.
   const levelsByForm: Record<string, number[]> = {};
@@ -187,6 +274,13 @@ export default async function StudentPage({ params }: { params: Promise<{ id: st
   const given = [student.first_name, student.middle_name, student.name_ext]
     .filter(Boolean)
     .join(" ");
+  const birthplace = [
+    student.birthplace_barrio,
+    student.birthplace_town,
+    student.birthplace_province,
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   return (
     <main className="page">
@@ -204,9 +298,23 @@ export default async function StudentPage({ params }: { params: Promise<{ id: st
           <Link className="btn" href={`/students/${studentId}/edit`}>
             Edit record
           </Link>
+          {original && (
+            <a className="btn" href={`/api/students/${studentId}/original`}>
+              Download original
+            </a>
+          )}
           <PrintPanel studentId={studentId} forms={forms} levelsByForm={levelsByForm} />
         </div>
       </div>
+
+      {isOldRecord && (
+        <div className="notice">
+          <strong>Pre-K-12 record (Form 137).</strong> This learner studied the old secondary
+          curriculum, so their years are named as the original document names them. The record
+          cannot be reissued on a modern SF10 — that would state a curriculum they never took.
+          {original ? " Use Download original instead." : ""}
+        </div>
+      )}
 
       {issueCount > 0 && (
         <div className="notice">
@@ -226,7 +334,11 @@ export default async function StudentPage({ params }: { params: Promise<{ id: st
           <dl className="fields">
             <div className="field">
               <dt>LRN</dt>
-              <dd className="mono">{student.lrn}</dd>
+              {/* Never show a generated marker as if it were the learner's number. Form 137
+                  records predate the LRN system, so there is nothing real to show. */}
+              <dd className={student.lrn_placeholder ? "muted" : "mono"}>
+                {student.lrn_placeholder ? "No LRN · pre-2011 record" : student.lrn}
+              </dd>
             </div>
             <div className="field">
               <dt>Last Name</dt>
@@ -248,6 +360,30 @@ export default async function StudentPage({ params }: { params: Promise<{ id: st
               <dt>Date of Birth</dt>
               <dd className="mono">{student.birthdate ?? ""}</dd>
             </div>
+            {/* Form 137 records these; the SF10 does not, so they only appear for old records. */}
+            {birthplace && (
+              <div className="field">
+                <dt>Place of Birth</dt>
+                <dd>{birthplace}</dd>
+              </div>
+            )}
+            {student.guardian_name && (
+              <div className="field">
+                <dt>Parent / Guardian</dt>
+                <dd>
+                  {student.guardian_name}
+                  {student.guardian_occupation && (
+                    <span className="muted"> · {student.guardian_occupation}</span>
+                  )}
+                </dd>
+              </div>
+            )}
+            {student.guardian_address && (
+              <div className="field">
+                <dt>Guardian Address</dt>
+                <dd>{student.guardian_address}</dd>
+              </div>
+            )}
           </dl>
         </div>
       </section>

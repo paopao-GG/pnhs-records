@@ -38,7 +38,18 @@ Nothing is ever silently dropped. Records with something odd about them — an L
 listed under **Needs review** with the exact cell it came from. The school's real files
 contain all of these.
 
-**SHS only for now.** JHS import needs a real filled SF10-JHS to build and verify against.
+**Three formats are supported**, detected from the file's contents rather than its name:
+
+| Format | File | Notes |
+|---|---|---|
+| SF10-SHS | `.xlsx`, sheets `FRONT`/`BACK` | Prints back to the SF10 template |
+| SF10-JHS | `.xlsx`, sheets `Front`/`Back` | Prints back to the SF10 template |
+| Form 137 | `.docx` | Pre-K-12 record. **Archive only — never reprinted.** |
+
+Form 137 is the old *Secondary Student's Permanent Record*, First to Fourth Year. Those
+learners have no LRN (the system postdates them) and their records cannot be reissued on a
+modern SF10, because that would state a curriculum they never studied. The original document is
+kept and can be downloaded from the record page instead.
 
 ## How printing works
 

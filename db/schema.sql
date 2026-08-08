@@ -17,6 +17,16 @@ CREATE TABLE IF NOT EXISTS students (
   name_ext     TEXT,
   sex          TEXT CHECK (sex IN ('M', 'F')),
   birthdate    TEXT,
+  -- 1 when `lrn` is a generated marker rather than the learner's real number. Form 137
+  -- records predate the LRN system, so the UI must never present that value as an LRN.
+  lrn_placeholder INTEGER NOT NULL DEFAULT 0,
+  -- Form 137 only: it records these, the SF10 does not.
+  birthplace_province  TEXT,
+  birthplace_town      TEXT,
+  birthplace_barrio    TEXT,
+  guardian_name        TEXT,
+  guardian_occupation  TEXT,
+  guardian_address     TEXT,
   created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
   updated_at   TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -72,6 +82,9 @@ CREATE TABLE IF NOT EXISTS enrollment_terms (
   -- The general average as the source document carried it, for imported records. Null for
   -- records encoded in the app, which compute it. See migration 1 for why it is not derived.
   general_average   REAL,
+  -- 'k12' for Grade 7-12 records; 'old' for Form 137's First-Fourth Year. Levels 7-10 are
+  -- reused for the old curriculum so existing queries work, and this carries the truth.
+  curriculum        TEXT    NOT NULL DEFAULT 'k12',
   UNIQUE (student_id, level, semester)
 );
 
@@ -93,11 +106,28 @@ CREATE TABLE IF NOT EXISTS term_subjects (
   -- Only stored for rows the SF10 template does not compute itself, i.e. JHS Homeroom
   -- Guidance and CAT. Everywhere else the template's own AVERAGE formula owns this.
   final_rating  REAL,
+  -- SF10 calls this Remarks, Form 137 calls it Action Taken; both hold Passed/Failed.
   remarks       TEXT,
+  -- Form 137 only.
+  units_earned      REAL,
+  extra_curricular  TEXT,
   UNIQUE (term_id, ordinal)
 );
 
 CREATE INDEX IF NOT EXISTS idx_subjects_term ON term_subjects (term_id);
+
+-- Monthly attendance, recorded by Form 137 and not by the SF10. One row per month per term.
+CREATE TABLE IF NOT EXISTS term_attendance (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  term_id         INTEGER NOT NULL REFERENCES enrollment_terms (id) ON DELETE CASCADE,
+  ordinal         INTEGER NOT NULL,
+  month           TEXT    NOT NULL,
+  days_of_school  REAL,
+  days_present    REAL,
+  UNIQUE (term_id, ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS idx_attendance_term ON term_attendance (term_id);
 
 CREATE TABLE IF NOT EXISTS school_settings (
   key    TEXT PRIMARY KEY,
@@ -135,6 +165,9 @@ CREATE TABLE IF NOT EXISTS import_files (
   student_id   INTEGER REFERENCES students (id) ON DELETE SET NULL,
   status       TEXT    NOT NULL,
   notes        TEXT,
+  -- Where the original was copied. A Form 137 cannot be reprinted onto a modern form, so the
+  -- original file is the only reissuable artefact and must be kept.
+  stored_path  TEXT,
   imported_at  TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 

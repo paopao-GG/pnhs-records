@@ -12,6 +12,13 @@ export type Sex = "M" | "F";
 
 export interface StudentIdentity {
   lrn: string;
+  /**
+   * True when `lrn` is a generated marker rather than the learner's real number.
+   *
+   * Form 137 records predate the LRN system entirely. The UI must show "No LRN" rather than
+   * this value, or a number we invented could be quoted as an identifier.
+   */
+  lrnPlaceholder?: boolean;
   lastName: string;
   firstName: string;
   middleName?: string;
@@ -19,6 +26,14 @@ export interface StudentIdentity {
   sex?: Sex;
   /** As printed on the form, mm/dd/yyyy. */
   birthdate?: string;
+
+  // Form 137 records these; the SF10 does not.
+  birthplaceProvince?: string;
+  birthplaceTown?: string;
+  birthplaceBarrio?: string;
+  guardianName?: string;
+  guardianOccupation?: string;
+  guardianAddress?: string;
 }
 
 export interface SubjectRecord {
@@ -36,8 +51,12 @@ export interface SubjectRecord {
    * would clobber the template's formula.
    */
   finalRating?: number;
-  /** JHS writes this literal ("Passed"); SHS computes it with a formula. */
+  /** JHS writes this literal ("Passed"); SHS computes it with a formula. Form 137: Action Taken. */
   remarks?: string;
+  /** Form 137 only — the old curriculum credited units per subject. */
+  unitsEarned?: number;
+  /** Form 137 only. */
+  extraCurricular?: string;
 }
 
 export interface SchoolInfo {
@@ -65,6 +84,15 @@ export interface TermRecord extends SchoolInfo {
    * the template computes this cell itself. Absent for records created in the app.
    */
   generalAverage?: number;
+  /**
+   * `old` for Form 137's First-Fourth Year, `k12` (the default) for Grade 7-12.
+   *
+   * Load-bearing: levels 7-10 are reused for the old curriculum so existing queries work, so
+   * this is the only thing stopping a 1995 record being offered a modern SF10 print.
+   */
+  curriculum?: "k12" | "old";
+  /** How the source document names this year, e.g. "First Year". */
+  yearLabel?: string;
 }
 
 export interface JhsEligibility {

@@ -151,11 +151,30 @@ Needs #0. **Build before #8** — sync needs a user identity to attribute and re
 
 ---
 
-## 7. Form 137 importer · ~4–5 days
+## 7. Form 137 importer · **DONE**
 
-Import the old *Secondary Student's Permanent Record*. Highest-variance item in this list.
+Import the old *Secondary Student's Permanent Record*. All 20 files import; both storage
+variants share one normaliser.
 
-**The 20 sample files are not one format — they are two:**
+What the build settled that the plan could not:
+
+- **No LRN exists on these forms.** A generated `F137-…` key derived from name and birthdate
+  keeps identity stable across re-imports; `lrn_placeholder` makes the UI show *No LRN ·
+  pre-2011 record* so an invented value is never shown as a real one.
+- **A year with printed subject names but no marks is not an attended year.** VILLARAZA
+  dropped out in January 2009; importing the blank Third and Fourth Year would have asserted
+  enrolment that never happened.
+- **Bracketed unit values (`[1.2]`, `(1.2)`) are notation, not negatives** — 143 of the 144 in
+  the real files sit against "Passed".
+- **`PALIZA` is one learner's form duplicated**, not two learners. First copy imported, rest
+  flagged.
+- **The print guard belongs in `buildSf10Record`, not just the UI.** Hiding the button left the
+  endpoint reachable by URL, and it returned 200 — a 1995 record on a 2017 form. Now 409.
+
+Original documents are stored under `data/originals/` and served by
+`/api/students/[id]/original`.
+
+**The 20 files are not one format — they are two:**
 
 | Variant | Files | Grades stored as |
 |---|---|---|
