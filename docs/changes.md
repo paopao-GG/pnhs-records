@@ -69,18 +69,17 @@ term for that form type.
 
 ---
 
-## 2. Folder chooser, import only new files · ~½ day
+## 2. Folder chooser, import only new files · **DONE, then REMOVED**
 
-Pick which folder to scan rather than typing a path, and take in only files not already
-imported.
+Built as a server-side folder browser, and deleted again when the target became a serverless
+host: it enumerated `process.cwd()`, which there is the deployment bundle rather than the
+school's archive. There is nothing on that disk to scan.
 
-- **"Only new" already works** — files are identified by SHA-256, so re-importing a folder
-  skips everything already taken in. Nothing to build there.
-- What's missing is choosing the folder. Once deployed the files live *on the server*, so this
-  needs a small server-side folder browser, not a browser file picker.
-- Remember recently used folders.
-- Also fixes a live papercut: `npm run roundtrip`, `npm run import:dry` and the `/import` page
-  still default to `sf10-copy`, which has moved to `sf10-files/sf10-copy`.
+Import is now the file picker alone. "Only new" still works and always did — files are
+identified by SHA-256, so re-importing takes in nothing already present.
+
+Directory walking survives in `scripts/_local-files.ts` for the scripts, which run on a real
+machine pointed at real folders. It is only the *server* that must not.
 
 ---
 

@@ -65,6 +65,7 @@ most valuable test in the repo.
 | **`@libsql/client`** | One driver, two URLs — a local `file:` database for development and every verification script, a hosted libSQL database in production. libSQL is a SQLite dialect, so `schema.sql`, `PRAGMA user_version` and every SQL string are the same in both. See §3. |
 | **Plain SQL, no ORM** | Twelve tables. A `schema.sql` plus parameterised statements is fewer moving parts than an ORM with a codegen step. |
 | **`scrypt` from `node:crypto`** | Password hashing with no new dependency. Sessions are random opaque tokens stored as a SHA-256, so there is no signing secret to leak and a database dump contains no usable sessions. |
+| **`@aws-sdk/client-s3`** | Cloudflare R2 for the imported originals. The largest dependency here, taken deliberately: the alternative storage ceiling is reached during the first full intake. Confined to [`lib/blob/store.ts`](../lib/blob/store.ts), which also has a local-disk backing so nothing else needs a bucket. |
 | **Hand-written CSS** | Fonts are Windows-native (Constantia / Corbel / Consolas) so the UI renders correctly with **no network**, which a local offline app requires. |
 | **`fflate`** | The only third-party runtime dependency. Zip read/write for the .xlsx surgery in §4. |
 
@@ -118,6 +119,24 @@ more than one middleware auth-bypass advisory.
 
 **If you add anything that reads or writes learner data, it starts with `requireUser()`.** There
 is no ambient protection to inherit.
+
+### Gotcha: a key is not a path
+
+`import_files.stored_path` holds an object **key** (`originals/<sha256>.<ext>`), not a filesystem
+path. [`lib/blob/store.ts`](../lib/blob/store.ts) still accepts the old `data/originals/...` form
+so rows written before object storage keep working.
+
+Two things that guard it, both of which replaced a filesystem check and are easy to drop by
+accident:
+
+- `isBlobKey()` refuses anything not matching the key pattern. A value read back out of the
+  database must not be able to address storage we did not write — the same concern as the old
+  path-traversal check, a different mechanism.
+- `blobKey()` **rebuilds** the extension from the trailing alphanumeric run rather than filtering
+  characters out. Filtering looked equivalent and was not: `"../../evil"` filtered down to
+  `"....evil"`, which the guard then refused, so the file would have been stored under a key
+  nothing could ever read back. Losing the archive copy silently is worse than refusing the
+  import.
 
 ### One driver, two URLs
 

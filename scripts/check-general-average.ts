@@ -16,7 +16,7 @@ import { resolve, join } from "node:path";
 import { Workbook } from "../lib/xlsx/workbook.ts";
 import { getCell } from "../lib/xlsx/cells.ts";
 import { detectForm } from "../lib/sf10/detect-form.ts";
-import { listSf10Files } from "../lib/import/import-sf10.ts";
+import { listImportableFiles } from "./_local-files.ts";
 import { parseJhsWorkbook } from "../lib/sf10/import-jhs.ts";
 import { parseShsWorkbook } from "../lib/sf10/import-shs.ts";
 import { JHS_BLOCKS, JHS_GENERAL_COL, JHS_OFFSET } from "../lib/sf10/jhs-map.ts";
@@ -32,7 +32,7 @@ let compared = 0;
 let agree = 0;
 const mismatches: string[] = [];
 
-for (const rel of listSf10Files(folder)) {
+for (const rel of listImportableFiles(folder)) {
   const path = join(folder, rel);
   let wb: Workbook;
   try {

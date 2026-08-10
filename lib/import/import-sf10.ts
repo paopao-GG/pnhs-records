@@ -14,9 +14,9 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { extname, join } from "node:path";
+import { extname } from "node:path";
 import { getDb } from "../db/index.ts";
+import { putOriginal } from "../blob/store.ts";
 import { Workbook } from "../xlsx/workbook.ts";
 import { parseShsWorkbook, NotAnShsFormError } from "../sf10/import-shs.ts";
 import { parseJhsWorkbook, NotAJhsFormError } from "../sf10/import-jhs.ts";
@@ -57,63 +57,6 @@ export interface ImportSummary {
   duplicates: number;
   failed: number;
   issueCount: number;
-}
-
-/**
- * Every .xlsx under a folder, including subfolders, as paths relative to it.
- *
- * Recursive because the school's files are organised into per-form subfolders, and pointing
- * the importer at the parent should do the obvious thing. Re-importing is free, so casting a
- * wide net costs nothing.
- *
- * `~$` files are Word/Excel lock files left behind by an open document, not records.
- */
-export function listSf10Files(folder: string): string[] {
-  return readdirSync(folder, { recursive: true, encoding: "utf8" })
-    .filter((f) => {
-      const base = f.split(/[\\/]/).pop() ?? f;
-      const lower = f.toLowerCase();
-      // .xlsx is SF10 (both variants); .docx is Form 137.
-      return (lower.endsWith(".xlsx") || lower.endsWith(".docx")) && !base.startsWith("~$");
-    })
-    .sort();
-}
-
-export function folderExists(folder: string): boolean {
-  try {
-    return statSync(folder).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Import every SF10 in a folder. Safe to call repeatedly on the same folder.
- *
- * Sequential rather than concurrent, deliberately: two files for the same learner must not
- * race, and the school's byte-identical duplicate pair relies on the first one landing before
- * the second is checked.
- */
-export async function importFolder(folder: string): Promise<ImportSummary> {
-  const results: FileResult[] = [];
-  for (const filename of listSf10Files(folder)) {
-    results.push(await importOneFile(join(folder, filename), filename));
-  }
-
-  return {
-    folder,
-    results,
-    imported: results.filter((r) => r.status === "imported").length,
-    updated: results.filter((r) => r.status === "updated").length,
-    duplicates: results.filter((r) => r.status === "duplicate").length,
-    failed: results.filter((r) => r.status === "failed").length,
-    issueCount: results.reduce((n, r) => n + r.issues.length, 0),
-  };
-}
-
-export async function importOneFile(path: string, filename: string): Promise<FileResult> {
-  const bytes = readFileSync(path);
-  return importBytes(bytes, filename);
 }
 
 export async function importBytes(bytes: Uint8Array, filename: string): Promise<FileResult> {
@@ -200,7 +143,7 @@ export async function importBytes(bytes: Uint8Array, filename: string): Promise<
   // Keep the original. For Form 137 it is the only reissuable artefact — the record cannot be
   // reprinted onto a modern SF10 — and for SF10 it makes a future re-parse possible without
   // asking the registrar for files again.
-  const storedPath = storeOriginal(bytes, filename, sha256);
+  const storedPath = await putOriginal(sha256, extname(filename).toLowerCase() || ".bin", bytes);
   const fileId = await recordFile(sha256, filename, form, studentId, status, null, storedPath);
   await saveIssues(fileId, studentId, issues);
 
@@ -457,26 +400,6 @@ function toNumber(v: number | string | undefined): number | null {
   if (v === undefined || v === null || v === "") return null;
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : null;
-}
-
-/**
- * Keep a copy of the imported file, named by its content hash.
- *
- * Hash-named so re-importing the same bytes overwrites rather than accumulating, and so the
- * copy is findable from `import_files.sha256` alone. Returns the path relative to the project
- * root; a failure to store is not fatal, since the record itself imported fine.
- */
-function storeOriginal(bytes: Uint8Array, filename: string, sha256: string): string | null {
-  try {
-    const dir = join(process.cwd(), "data", "originals");
-    mkdirSync(dir, { recursive: true });
-    const ext = extname(filename).toLowerCase() || ".bin";
-    const rel = join("data", "originals", `${sha256}${ext}`);
-    writeFileSync(join(process.cwd(), rel), bytes);
-    return rel.split(/[\\/]/).join("/");
-  } catch {
-    return null;
-  }
 }
 
 async function recordFile(

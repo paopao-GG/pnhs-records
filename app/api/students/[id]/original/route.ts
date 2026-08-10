@@ -6,10 +6,10 @@
  * learner never studied. The original document is the record.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { basename, resolve, sep } from "node:path";
+import { basename } from "node:path";
 import { getOriginalFile, getStudent } from "@/lib/db/queries.ts";
 import { requireUserForApi } from "@/lib/auth/current-user.ts";
+import { getOriginal, isBlobKey } from "@/lib/blob/store.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,26 +37,26 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     return new Response("No original file was stored for this learner.", { status: 404 });
   }
 
-  // stored_path comes from our own import, but resolve and bound it anyway — a path read back
-  // out of the database should never be able to reach outside the data folder.
-  const root = resolve(process.cwd(), "data");
-  const full = resolve(process.cwd(), original.stored_path);
-  if (full !== root && !full.startsWith(root + sep)) {
-    return new Response("Stored file is outside the data folder.", { status: 500 });
+  // stored_path comes from our own import, but bound it anyway — a value read back out of the
+  // database should never be able to address storage we did not write. This replaces a
+  // filesystem path check; the mechanism changed when files moved to object storage, the
+  // concern did not.
+  if (!isBlobKey(original.stored_path)) {
+    return new Response("Stored file reference is not one of ours.", { status: 500 });
   }
-  if (!existsSync(full)) {
+
+  // Read into memory rather than streaming: these files average 180 KB, so buffering costs
+  // nothing, and a Node read stream is not a web ReadableStream — handing one to Response
+  // throws "ReadableStream is already closed" at runtime.
+  const bytes = await getOriginal(original.stored_path);
+  if (!bytes) {
     return new Response(
       "The stored copy of this file is missing. Re-import it to restore the original.",
       { status: 410 },
     );
   }
 
-  const ext = full.slice(full.lastIndexOf(".")).toLowerCase();
-
-  // Read into memory rather than streaming: a Node read stream is not a web ReadableStream,
-  // and handing one to Response throws "ReadableStream is already closed" at runtime. These
-  // files average 180 KB, so buffering costs nothing.
-  const bytes = readFileSync(full);
+  const ext = original.stored_path.slice(original.stored_path.lastIndexOf(".")).toLowerCase();
 
   return new Response(bytes as unknown as BodyInit, {
     headers: {

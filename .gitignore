@@ -8,3 +8,4 @@ data/
 
 # Generated SF10 files from the spike and export checks.
 spike-output/
+.env.local

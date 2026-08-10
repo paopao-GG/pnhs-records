@@ -2,14 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { join, resolve as resolvePath, sep } from "node:path";
-import { readdirSync } from "node:fs";
-import {
-  folderExists,
-  importFolder,
-  listSf10Files,
-  type ImportSummary,
-} from "@/lib/import/import-sf10.ts";
 import {
   createStudent,
   createSubjects,
@@ -239,104 +231,6 @@ export async function markIssueResolved(issueId: number): Promise<void> {
   await resolveIssue(issueId);
   revalidatePath("/import/review");
   revalidatePath("/import");
-}
-
-export interface ScanResult {
-  folder: string;
-  exists: boolean;
-  files: string[];
-}
-
-/** Look at a folder without importing, so the registrar sees what is about to happen. */
-export async function scanFolder(folderInput: string): Promise<ScanResult> {
-  await requireUser();
-
-  const folder = resolveImportFolder(folderInput);
-  if (!folderExists(folder)) return { folder, exists: false, files: [] };
-  return { folder, exists: true, files: listSf10Files(folder) };
-}
-
-export async function runImport(folderInput: string): Promise<ImportSummary> {
-  await requireUser();
-
-  const folder = resolveImportFolder(folderInput);
-  if (!folderExists(folder)) {
-    throw new Error(`No folder at ${folder}`);
-  }
-
-  const summary = await importFolder(folder);
-  revalidatePath("/");
-  revalidatePath("/import");
-  return summary;
-}
-
-export interface FolderListing {
-  /** Path relative to the import root, "" at the top. */
-  path: string;
-  parent: string | null;
-  folders: { name: string; path: string; fileCount: number }[];
-  fileCount: number;
-}
-
-/**
- * List the subfolders of one folder, for the import browser.
- *
- * Confined to IMPORT_ROOT. A typed path cannot escape it — `..` segments resolve and are then
- * rejected — so this cannot be used to enumerate the server's filesystem. That matters little
- * on a single-user machine and matters a great deal once accounts exist and this is reachable
- * over the school network.
- */
-export async function browseFolder(relative: string): Promise<FolderListing> {
-  await requireUser();
-
-  const dir = safeResolve(relative);
-  const rel = toRelative(dir);
-
-  const entries = readdirSync(dir, { withFileTypes: true });
-  const folders = entries
-    .filter((e) => e.isDirectory() && !e.name.startsWith("."))
-    .map((e) => {
-      const childPath = rel ? `${rel}/${e.name}` : e.name;
-      let fileCount = 0;
-      try {
-        fileCount = listSf10Files(join(dir, e.name)).length;
-      } catch {
-        fileCount = 0; // unreadable folder; show it with zero rather than failing the listing
-      }
-      return { name: e.name, path: childPath, fileCount };
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
-
-  return {
-    path: rel,
-    parent: rel === "" ? null : rel.split("/").slice(0, -1).join("/"),
-    folders,
-    fileCount: listSf10Files(dir).length,
-  };
-}
-
-/** Everything importable lives under the project folder. */
-const IMPORT_ROOT = process.cwd();
-
-function safeResolve(relative: string): string {
-  const cleaned = (relative ?? "").trim().replace(/^[/\\]+/, "");
-  const resolved = resolvePath(IMPORT_ROOT, cleaned);
-  const withinRoot =
-    resolved === IMPORT_ROOT || resolved.startsWith(IMPORT_ROOT + sep);
-  if (!withinRoot) {
-    throw new Error("That folder is outside the records folder.");
-  }
-  return resolved;
-}
-
-function toRelative(absolute: string): string {
-  const rel = absolute.slice(IMPORT_ROOT.length).replace(/^[/\\]+/, "");
-  return rel.split(/[\\/]/).filter(Boolean).join("/");
-}
-
-/** Relative paths are resolved against the project folder, which is what users type. */
-function resolveImportFolder(input: string): string {
-  return safeResolve(input.trim() || "sf10-files");
 }
 
 export interface NewStudentInput {

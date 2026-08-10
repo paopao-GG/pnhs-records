@@ -1,91 +1,173 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  browseFolder,
-  runImport,
-  scanFolder,
-  type FolderListing,
-  type ScanResult,
-} from "../actions.ts";
-import type { ImportSummary } from "@/lib/import/import-sf10.ts";
+import type { ImportSummary, FileResult } from "@/lib/import/import-sf10.ts";
 
 /**
- * Two ways in: pick specific files, or scan a whole folder.
+ * Pick files and import them.
  *
- * The folder route is scan-then-import so the registrar sees what was found before anything
- * is written. Either way importing is safe to repeat - a file is only treated as already
- * imported if it produced a learner who still exists.
+ * ## How a file gets in
+ *
+ *     browser --(1) ticket--> server        one presigned PUT, one key, five minutes
+ *     browser --(2) PUT-----> object store  the bytes never pass through a function
+ *     browser --(3) keys----> server        small batches; the server reads, parses, writes
+ *
+ * Step 2 exists because a Vercel function caps request bodies at 4.5 MB — about twenty SF10s —
+ * and the school's archive is over a thousand files. Step 3 is batched so no single request
+ * runs near the function time limit.
+ *
+ * Where no object store is configured (local development), steps 1 and 2 are skipped and the
+ * files are posted to the server directly. Same endpoint, same result shape.
+ *
+ * Importing is always safe to repeat: a file counts as already imported only while the learner
+ * it produced still exists.
  */
-export function ImportPanel({ defaultFolder }: { defaultFolder: string }) {
+
+/** Small enough that a batch is never near the function time limit. */
+const BATCH_SIZE = 5;
+
+interface Uploaded {
+  key: string;
+  filename: string;
+}
+
+/** The SHA-256 the ticket endpoint needs, computed in the browser. */
+async function sha256Of(file: File): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+const extensionOf = (name: string) => {
+  const i = name.lastIndexOf(".");
+  return i === -1 ? "" : name.slice(i).toLowerCase();
+};
+
+export function ImportPanel() {
   const router = useRouter();
-  const [folder, setFolder] = useState(defaultFolder);
-  const [scan, setScan] = useState<ScanResult | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const [chosen, setChosen] = useState<File[]>([]);
   const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number; stage: string } | null>(
+    null,
+  );
 
-  const fileInput = useRef<HTMLInputElement>(null);
-  const [chosen, setChosen] = useState<File[]>([]);
-  const [uploading, setUploading] = useState(false);
+  const reset = () => {
+    setChosen([]);
+    if (fileInput.current) fileInput.current.value = "";
+  };
 
-  const doUpload = async () => {
+  const doImport = async () => {
     if (chosen.length === 0) return;
     setError(null);
-    setUploading(true);
+    setSummary(null);
+    setBusy(true);
+
+    const results: FileResult[] = [];
+    const failEarly = (file: File, message: string) =>
+      results.push({ filename: file.name, status: "failed", issues: [], error: message });
+
     try {
-      const body = new FormData();
-      for (const f of chosen) body.append("files", f);
+      // ---- 1 & 2: bytes straight to the object store, where there is one -------------
+      const uploaded: Uploaded[] = [];
+      let directPost: File[] = [];
 
-      const res = await fetch("/api/import/upload", { method: "POST", body });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? `Upload failed (${res.status})`);
+      for (const [i, file] of chosen.entries()) {
+        setProgress({ done: i, total: chosen.length, stage: "Uploading" });
 
-      setSummary(json as ImportSummary);
-      setScan(null);
-      setChosen([]);
-      if (fileInput.current) fileInput.current.value = "";
+        const ext = extensionOf(file.name);
+        const ticketRes = await fetch("/api/import/ticket", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sha256: await sha256Of(file), ext }),
+        });
+
+        // 409 means no object store is configured - post the file to the server instead.
+        if (ticketRes.status === 409) {
+          directPost = chosen;
+          break;
+        }
+        if (!ticketRes.ok) {
+          const body = await ticketRes.json().catch(() => ({}));
+          failEarly(file, body.error ?? `Could not start the upload (${ticketRes.status}).`);
+          continue;
+        }
+
+        const ticket = (await ticketRes.json()) as { key: string; url: string; contentType: string };
+        const put = await fetch(ticket.url, {
+          method: "PUT",
+          headers: { "Content-Type": ticket.contentType },
+          body: file,
+        });
+        if (!put.ok) {
+          failEarly(file, `Upload failed (${put.status}).`);
+          continue;
+        }
+        uploaded.push({ key: ticket.key, filename: file.name });
+      }
+
+      // ---- 3: import in batches, accumulating one summary ---------------------------
+      const send = async (payload: BodyInit, headers?: HeadersInit) => {
+        const res = await fetch("/api/import/upload", { method: "POST", body: payload, headers });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error ?? `Import failed (${res.status})`);
+        return json as ImportSummary;
+      };
+
+      if (directPost.length > 0) {
+        // Local development: no bucket, so the server takes the bytes.
+        for (let i = 0; i < directPost.length; i += BATCH_SIZE) {
+          const batch = directPost.slice(i, i + BATCH_SIZE);
+          setProgress({ done: i, total: directPost.length, stage: "Importing" });
+          const body = new FormData();
+          for (const f of batch) body.append("files", f);
+          results.push(...(await send(body)).results);
+        }
+      } else {
+        for (let i = 0; i < uploaded.length; i += BATCH_SIZE) {
+          const batch = uploaded.slice(i, i + BATCH_SIZE);
+          setProgress({ done: i, total: uploaded.length, stage: "Importing" });
+          const batchSummary = await send(
+            JSON.stringify({ files: batch }),
+            { "Content-Type": "application/json" },
+          );
+          results.push(...batchSummary.results);
+        }
+      }
+
+      setSummary({
+        folder: "(uploaded files)",
+        results,
+        imported: results.filter((r) => r.status === "imported").length,
+        updated: results.filter((r) => r.status === "updated").length,
+        duplicates: results.filter((r) => r.status === "duplicate").length,
+        failed: results.filter((r) => r.status === "failed").length,
+        issueCount: results.reduce((n, r) => n + r.issues.length, 0),
+      });
+      reset();
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      // Whatever did land is still worth showing - those records are in.
+      if (results.length > 0) {
+        setSummary({
+          folder: "(uploaded files)",
+          results,
+          imported: results.filter((r) => r.status === "imported").length,
+          updated: results.filter((r) => r.status === "updated").length,
+          duplicates: results.filter((r) => r.status === "duplicate").length,
+          failed: results.filter((r) => r.status === "failed").length,
+          issueCount: results.reduce((n, r) => n + r.issues.length, 0),
+        });
+      }
     } finally {
-      setUploading(false);
+      setBusy(false);
+      setProgress(null);
     }
-  };
-
-  const doScan = () => {
-    setError(null);
-    setSummary(null);
-    startTransition(async () => {
-      try {
-        setScan(await scanFolder(folder));
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      }
-    });
-  };
-
-  const doImport = () => {
-    setError(null);
-    startTransition(async () => {
-      try {
-        setSummary(await runImport(folder));
-        setScan(null);
-        router.refresh();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      }
-    });
-  };
-
-  const busy = pending || uploading;
-
-  const pickFolder = (path: string) => {
-    setFolder(path);
-    setScan(null);
-    setSummary(null);
   };
 
   return (
@@ -94,16 +176,17 @@ export function ImportPanel({ defaultFolder }: { defaultFolder: string }) {
         <div className="card-head">
           <h3>Choose files</h3>
           <span className="muted" style={{ fontSize: 12.5 }}>
-            One SF10, or several
+            One record, or a whole year&rsquo;s worth
           </span>
         </div>
         <div className="card-body">
           <input
             ref={fileInput}
             type="file"
-            accept=".xlsx"
+            accept=".xlsx,.docx"
             multiple
             className="file-input"
+            disabled={busy}
             onChange={(e) => {
               setChosen(Array.from(e.target.files ?? []));
               setSummary(null);
@@ -112,102 +195,54 @@ export function ImportPanel({ defaultFolder }: { defaultFolder: string }) {
           />
 
           {chosen.length > 0 && (
-            <ul className="file-list" style={{ marginTop: 14 }}>
-              {chosen.map((f) => (
-                <li key={f.name} className="mono">
-                  {f.name}
-                </li>
-              ))}
-            </ul>
+            <p className="count-line" style={{ marginTop: 14 }}>
+              {chosen.length} {chosen.length === 1 ? "file" : "files"} selected
+              {chosen.length <= 25 && (
+                <ul className="file-list" style={{ marginTop: 8 }}>
+                  {chosen.map((f) => (
+                    <li key={f.name} className="mono">
+                      {f.name}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </p>
           )}
 
           <div className="btn-row" style={{ marginTop: 14, alignItems: "center" }}>
             <button
               className="btn"
               data-variant="primary"
-              onClick={doUpload}
+              onClick={doImport}
               disabled={busy || chosen.length === 0}
             >
-              {uploading
-                ? "Importing…"
+              {busy
+                ? "Working…"
                 : chosen.length === 0
                   ? "Import selected files"
                   : `Import ${chosen.length} ${chosen.length === 1 ? "file" : "files"}`}
             </button>
-            {chosen.length > 0 && !uploading && (
-              <button
-                className="btn"
-                onClick={() => {
-                  setChosen([]);
-                  if (fileInput.current) fileInput.current.value = "";
-                }}
-              >
+            {chosen.length > 0 && !busy && (
+              <button className="btn" onClick={reset}>
                 Clear
-              </button>
-            )}
-          </div>
-        </div>
-      </section>
-
-      <section className="card">
-        <div className="card-head">
-          <h3>Or scan a whole folder</h3>
-          <span className="muted" style={{ fontSize: 12.5 }}>
-            Includes subfolders
-          </span>
-        </div>
-        <div className="card-body">
-          <FolderBrowser current={folder} onPick={pickFolder} />
-
-          <div className="form-field" style={{ margin: "14px 0" }}>
-            <label htmlFor="folder">Folder</label>
-            <input
-              id="folder"
-              className="input mono"
-              value={folder}
-              onChange={(e) => {
-                setFolder(e.target.value);
-                setScan(null);
-                setSummary(null);
-              }}
-              placeholder="sf10-files"
-              onKeyDown={(e) => e.key === "Enter" && doScan()}
-            />
-          </div>
-
-          <div className="btn-row" style={{ alignItems: "center" }}>
-            <button className="btn" onClick={doScan} disabled={busy}>
-              {pending && !scan ? "Scanning…" : "Scan folder"}
-            </button>
-            {scan?.exists && scan.files.length > 0 && (
-              <button className="btn" data-variant="primary" onClick={doImport} disabled={busy}>
-                {pending ? "Importing…" : `Import ${scan.files.length} files`}
               </button>
             )}
             {error && <span style={{ color: "var(--seal)" }}>{error}</span>}
           </div>
 
-          {scan && !scan.exists && (
-            <p className="muted" style={{ marginBottom: 0 }}>
-              No folder at <span className="mono">{scan.folder}</span>
-            </p>
-          )}
-
-          {scan?.exists && (
-            <div style={{ marginTop: 16 }}>
-              <p className="count-line">
-                {scan.files.length} .xlsx {scan.files.length === 1 ? "file" : "files"} in{" "}
-                <span className="mono">{scan.folder}</span>
-              </p>
-              {scan.files.length > 0 && (
-                <ul className="file-list">
-                  {scan.files.map((f) => (
-                    <li key={f} className="mono">
-                      {f}
-                    </li>
-                  ))}
-                </ul>
-              )}
+          {progress && (
+            // A thousand files takes minutes. A page that says nothing looks like a page that
+            // has hung, and the registrar reloads it halfway through.
+            <div className="progress" style={{ marginTop: 14 }}>
+              <div className="progress-bar">
+                <div
+                  className="progress-fill"
+                  style={{ width: `${Math.round((progress.done / Math.max(progress.total, 1)) * 100)}%` }}
+                />
+              </div>
+              <span className="muted" style={{ fontSize: 12.5 }}>
+                {progress.stage} {progress.done} of {progress.total}
+              </span>
             </div>
           )}
         </div>
@@ -215,106 +250,6 @@ export function ImportPanel({ defaultFolder }: { defaultFolder: string }) {
 
       {summary && <Results summary={summary} />}
     </>
-  );
-}
-
-/**
- * Click through the folders under the records directory.
- *
- * The folders live on the server once this is deployed, so a browser file picker cannot name
- * them — the server has to list what it can see. Each row shows how many .xlsx files are
- * inside, including subfolders, so the right one is obvious without opening it.
- */
-function FolderBrowser({
-  current,
-  onPick,
-}: {
-  current: string;
-  onPick: (path: string) => void;
-}) {
-  const [listing, setListing] = useState<FolderListing | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, startLoading] = useTransition();
-
-  const load = (path: string) => {
-    setError(null);
-    startLoading(async () => {
-      try {
-        setListing(await browseFolder(path));
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      }
-    });
-  };
-
-  useEffect(() => {
-    load(current);
-    // Only on mount: afterwards navigation is driven by clicks, not by the text field.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  if (error) return <p style={{ color: "var(--seal)", margin: 0 }}>{error}</p>;
-  if (!listing) return <p className="muted" style={{ margin: 0 }}>Loading folders…</p>;
-
-  const crumbs = listing.path ? listing.path.split("/") : [];
-
-  return (
-    <div className="folder-browser" data-loading={loading}>
-      <div className="crumbs">
-        <button className="crumb" onClick={() => load("")}>
-          records
-        </button>
-        {crumbs.map((c, i) => (
-          <span key={c + i}>
-            <span className="crumb-sep">/</span>
-            <button className="crumb" onClick={() => load(crumbs.slice(0, i + 1).join("/"))}>
-              {c}
-            </button>
-          </span>
-        ))}
-      </div>
-
-      <div className="folder-list">
-        {listing.parent !== null && (
-          <button className="folder-row" onClick={() => load(listing.parent ?? "")}>
-            <span className="folder-name">← up</span>
-          </button>
-        )}
-        {listing.folders.length === 0 && listing.parent === null && (
-          <div className="muted" style={{ padding: "8px 12px", fontSize: 13 }}>
-            No subfolders here.
-          </div>
-        )}
-        {listing.folders.map((f) => (
-          <div key={f.path} className="folder-row">
-            <button className="folder-name" onClick={() => load(f.path)}>
-              {f.name}
-            </button>
-            <span className="muted" style={{ fontSize: 12 }}>
-              {f.fileCount} {f.fileCount === 1 ? "file" : "files"}
-            </span>
-            {f.fileCount > 0 && (
-              <button className="btn folder-use" onClick={() => onPick(f.path)}>
-                Use
-              </button>
-            )}
-          </div>
-        ))}
-      </div>
-
-      <div className="btn-row" style={{ marginTop: 10, alignItems: "center" }}>
-        <button
-          className="btn"
-          onClick={() => onPick(listing.path)}
-          disabled={listing.fileCount === 0}
-        >
-          Use this folder
-        </button>
-        <span className="muted" style={{ fontSize: 12.5 }}>
-          {listing.fileCount} .xlsx {listing.fileCount === 1 ? "file" : "files"} here and below
-        </span>
-      </div>
-    </div>
   );
 }
 

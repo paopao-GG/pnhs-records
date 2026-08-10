@@ -9,7 +9,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { listSf10Files } from "../lib/import/import-sf10.ts";
+import { listImportableFiles } from "./_local-files.ts";
 import { parseShsWorkbook } from "../lib/sf10/import-shs.ts";
 import { parseJhsWorkbook } from "../lib/sf10/import-jhs.ts";
 import { parseF137Bytes } from "../lib/sf10/import-f137.ts";
@@ -19,7 +19,7 @@ import { fullName } from "../lib/sf10/types.ts";
 
 const folder = resolve(process.argv[2] ?? "sf10-files");
 
-const files = listSf10Files(folder);
+const files = listImportableFiles(folder);
 
 console.log(`\nDry run over ${folder}`);
 console.log(`${files.length} .xlsx files\n`);

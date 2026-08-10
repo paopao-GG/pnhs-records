@@ -12,7 +12,7 @@
     "spike": "node scripts/spike-fill.ts",
     "verify": "node scripts/verify-fidelity.ts",
     "check": "node scripts/check-export.ts",
-    "test": "node scripts/test-grading.ts && node scripts/test-migrations.ts && node scripts/test-f137.ts && node scripts/test-auth.ts",
+    "test": "node scripts/test-grading.ts && node scripts/test-migrations.ts && node scripts/test-f137.ts && node scripts/test-auth.ts && node scripts/test-blob.ts",
     "import:dry": "node scripts/import-dry-run.ts",
     "roundtrip": "node scripts/check-roundtrip.ts",
     "test:migrations": "node scripts/test-migrations.ts",
@@ -20,9 +20,15 @@
     "test:f137": "node scripts/test-f137.ts",
     "reimport:f137": "node scripts/reimport-f137.ts",
     "test:auth": "node scripts/test-auth.ts",
-    "create-admin": "node scripts/create-admin.ts"
+    "create-admin": "node scripts/create-admin.ts",
+    "migrate:originals": "node --env-file=.env.local scripts/migrate-originals.ts",
+    "test:blob": "node scripts/test-blob.ts",
+    "test:blob:r2": "node --env-file=.env.local scripts/test-blob.ts",
+    "dev:r2": "next dev"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1106.0",
+    "@aws-sdk/s3-request-presigner": "^3.1106.0",
     "@libsql/client": "^0.17.4",
     "fflate": "^0.8.2",
     "next": "^15.5.22",

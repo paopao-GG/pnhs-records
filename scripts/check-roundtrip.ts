@@ -14,7 +14,7 @@ import { Workbook } from "../lib/xlsx/workbook.ts";
 import { parseShsWorkbook } from "../lib/sf10/import-shs.ts";
 import { parseJhsWorkbook } from "../lib/sf10/import-jhs.ts";
 import { detectForm, type Sf10Form } from "../lib/sf10/detect-form.ts";
-import { listSf10Files } from "../lib/import/import-sf10.ts";
+import { listImportableFiles } from "./_local-files.ts";
 import { fillJhs, fillShs } from "../lib/sf10/export.ts";
 import { fullName, type Sf10Record } from "../lib/sf10/types.ts";
 
@@ -95,7 +95,7 @@ function compare(a: Sf10Record, b: Sf10Record, label: string): void {
   });
 }
 
-const files = listSf10Files(FOLDER);
+const files = listImportableFiles(FOLDER);
 
 console.log(`\nRound-tripping ${files.length} files through fill + re-read\n`);
 

@@ -28,15 +28,15 @@ export default async function ImportPage() {
       </div>
 
       <div className="notice">
-        Pick individual SF10 files, or point this at a whole folder. Running either again is
-        safe — a file counts as already imported only while the learner it produced still
-        exists, so deleting a record and re-importing its file brings the record back.
+        Pick the SF10 files to take in — one, or a whole year&rsquo;s worth. Running it again is
+        safe: a file counts as already imported only while the learner it produced still exists,
+        so deleting a record and re-importing its file brings the record back.
         <br />
         <strong>Three formats are read:</strong> SF10-SHS and SF10-JHS (.xlsx), and Form 137
         (.docx). The format is detected from the file's contents, not its name.
       </div>
 
-      <ImportPanel defaultFolder="sf10-files" />
+      <ImportPanel />
 
       {history.length > 0 && (
         <section className="card">

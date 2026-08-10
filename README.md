@@ -37,12 +37,15 @@ changes.
 
 ## Importing
 
-Two ways in, both under **Import**:
+Pick the files under **Import** — one, or a whole year's worth.
 
-- **Choose files** — pick one SF10 or several with the file picker.
-- **Or scan a whole folder** — type the folder path, **Scan folder**, then **Import**.
+Where an object store is configured, the browser uploads each file **straight to storage** and
+then tells the server which keys to take in, in small batches. That is not gold-plating: a
+serverless function caps request bodies at 4.5 MB, which at ~220 KB per SF10 is about twenty
+files, and the school's archive is over a thousand. With no store configured the files post to
+the server directly, which is what happens in local development.
 
-Re-running either is safe. Files are identified by content hash, so importing the same folder
+Re-running an import is safe. Files are identified by content hash, so importing the same folder
 twice imports nothing the second time, and byte-identical duplicates collapse to one learner.
 A re-imported file replaces that learner's SHS terms rather than appending a second copy.
 
@@ -96,6 +99,8 @@ computed.
 | `npm run dev` | Start the app |
 | `npm run db:migrate` | Apply the schema and any pending migrations, and report what changed |
 | `npm run create-admin` | Create the first admin account (see above) |
+| `npm run migrate:originals` | Upload the stored original files to object storage (one-off) |
+| `npm run test:blob` | Object-storage keys, guards and round trip |
 | `npm run import:dry` | Parse a folder of SF10 files and report what would be imported, writing nothing |
 | `npm run roundtrip` | Prove file → database → printed form loses nothing |
 | `npm test` | Check grade arithmetic against the template's formulas |
@@ -113,6 +118,7 @@ lib/import/             Import orchestration — hashing, dedup, issue recording
 lib/db/                 Schema access and the DB -> Sf10Record bridge
 lib/db/client.ts        One libSQL driver, pointed at a local file or a hosted database
 lib/auth/                Sign-in: password hashing, sessions, lockout, the requireUser guard
+lib/blob/store.ts       Where imported originals live - object storage, or disk locally
 lib/grading.ts          DepEd grade rules, used by the UI and re-run on save
 db/schema.sql           Twelve tables
 docs/technical-design.md  How and why it works — read before changing lib/sf10 or lib/xlsx
@@ -123,6 +129,29 @@ data/pnhs.db            The records database (git-ignored)
 **[docs/technical-design.md](docs/technical-design.md)** is the handover document: the
 constraints the DepEd form imposes, the invariants that must not be broken, and the bugs that
 have already been paid for once.
+
+## Where the original files live
+
+Every imported file is kept, keyed by its SHA-256. For a Form 137 that copy **is** the
+reissuable record — those learners cannot be reprinted onto a modern SF10 — so it has to
+outlive the machine that imported it.
+
+Set these to use Cloudflare R2; leave them unset and files go to `data/originals/` as before,
+which is what keeps the verification scripts runnable offline:
+
+```
+R2_ACCOUNT_ID=...
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+R2_BUCKET=pnhs-originals
+```
+
+**Keep the bucket private.** Files are served back through `/api/students/[id]/original`, which
+checks the session. A public bucket URL would be a shareable link to a child's record and would
+undo the accounts work entirely.
+
+Uploading direct from the browser needs a CORS rule on the bucket allowing `PUT` from the app's
+origin. Without it uploads fail with an unhelpful network error.
 
 ## Accounts
 

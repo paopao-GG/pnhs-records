@@ -10,9 +10,12 @@
  * Run: npm run reimport:f137
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { getDb } from "../lib/db/index.ts";
 import { deleteStudent } from "../lib/db/queries.ts";
-import { importFolder } from "../lib/import/import-sf10.ts";
+import { importBytes } from "../lib/import/import-sf10.ts";
+import { listImportableFiles } from "./_local-files.ts";
 
 const db = await getDb();
 const n = async (sql: string) => Number((await db.execute(sql)).rows[0].n);
@@ -24,10 +27,15 @@ const old = await db.execute(
 console.log(`\n  clearing ${old.rows.length} Form 137 learners`);
 for (const r of old.rows) await deleteStudent(Number(r.id));
 
-const summary = await importFolder("sf10-files/form137");
+const FOLDER = "sf10-files/form137";
+const tally = { imported: 0, updated: 0, duplicate: 0, failed: 0 };
+for (const file of listImportableFiles(FOLDER)) {
+  const result = await importBytes(readFileSync(join(FOLDER, file)), file);
+  tally[result.status]++;
+}
 console.log(
-  `  imported=${summary.imported} updated=${summary.updated} ` +
-    `duplicate=${summary.duplicates} failed=${summary.failed}`,
+  `  imported=${tally.imported} updated=${tally.updated} ` +
+    `duplicate=${tally.duplicate} failed=${tally.failed}`,
 );
 
 console.log(`\n  students total                 : ${await n("SELECT COUNT(*) n FROM students")}`);

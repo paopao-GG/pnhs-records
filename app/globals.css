@@ -1134,3 +1134,27 @@ mark {
   margin: 0;
   flex-basis: 100%;
 }
+
+/* ------------------------------------------------------------------ import */
+
+/* Importing a thousand files takes minutes; a silent page reads as a hung one. */
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.progress-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--rule);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--gold);
+  border-radius: 3px;
+  transition: width 160ms ease-out;
+}
