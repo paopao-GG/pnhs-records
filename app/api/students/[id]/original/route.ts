@@ -9,6 +9,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, resolve, sep } from "node:path";
 import { getOriginalFile, getStudent } from "@/lib/db/queries.ts";
+import { requireUserForApi } from "@/lib/auth/current-user.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,14 +20,19 @@ const MIME: Record<string, string> = {
 };
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  // This hands over a learner's source document - the single most sensitive response the app
+  // produces, containing parents' names and home addresses on a Form 137.
+  const auth = await requireUserForApi();
+  if (auth.response) return auth.response;
+
   const { id } = await params;
   const studentId = Number(id);
   if (!Number.isInteger(studentId)) return new Response("Invalid student id", { status: 400 });
 
-  const student = getStudent(studentId);
+  const student = await getStudent(studentId);
   if (!student) return new Response("Student not found", { status: 404 });
 
-  const original = getOriginalFile(studentId);
+  const original = await getOriginalFile(studentId);
   if (!original) {
     return new Response("No original file was stored for this learner.", { status: 404 });
   }

@@ -12,9 +12,10 @@ import type { ShsCategory } from "../sf10/shs-map.ts";
 import {
   getEligibility,
   getStudent,
-  getSubjects,
+  getSubjectsForStudent,
   getTerms,
   type StudentRow,
+  type SubjectRow,
   type TermRow,
 } from "./queries.ts";
 
@@ -42,7 +43,7 @@ function toSubject(row: {
   };
 }
 
-function toTerm(row: TermRow): TermRecord {
+function toTerm(row: TermRow, subjects: SubjectRow[]): TermRecord {
   return {
     level: row.level as TermRecord["level"],
     semester: nullToUndefined(row.semester) as 1 | 2 | undefined,
@@ -56,7 +57,7 @@ function toTerm(row: TermRow): TermRecord {
     division: nullToUndefined(row.division),
     region: nullToUndefined(row.region),
     promotionRemark: nullToUndefined(row.promotion_remark),
-    subjects: getSubjects(row.id).map(toSubject),
+    subjects: subjects.map(toSubject),
   };
 }
 
@@ -76,19 +77,26 @@ function toStudent(row: StudentRow) {
  * Build the record for one printed form. Terms are filtered to that form's grade levels so
  * printing the JHS sheet for a Grade 12 student cannot leak SHS terms onto it.
  */
-export function buildSf10Record(
+export async function buildSf10Record(
   studentId: number,
   form: "jhs" | "shs",
   levels?: number[],
-): Sf10Record | null {
-  const student = getStudent(studentId);
+): Promise<Sf10Record | null> {
+  const student = await getStudent(studentId);
   if (!student) return null;
 
   // The form filter is a hard boundary — a JHS sheet can never carry Grade 11. `levels` narrows
   // within that, so a registrar can reissue just Grade 9 without the other years appearing.
   const wanted = levels && levels.length > 0 ? new Set(levels) : null;
 
-  const terms = getTerms(studentId)
+  // One query for every subject the learner has, rather than one per term. See
+  // getSubjectsForStudent() - each of those was a network round trip on the print path.
+  const [allTerms, subjectsByTerm] = await Promise.all([
+    getTerms(studentId),
+    getSubjectsForStudent(studentId),
+  ]);
+
+  const terms = allTerms
     /*
      * Old-curriculum terms can never go on an SF10.
      *
@@ -100,9 +108,9 @@ export function buildSf10Record(
     .filter((t) => (t.curriculum ?? "k12") !== "old")
     .filter((t) => (form === "jhs" ? t.level <= 10 : t.level >= 11))
     .filter((t) => !wanted || wanted.has(t.level))
-    .map(toTerm);
+    .map((t) => toTerm(t, subjectsByTerm.get(t.id) ?? []));
 
-  const el = getEligibility(studentId, form);
+  const el = await getEligibility(studentId, form);
 
   const record: Sf10Record = { student: toStudent(student), terms };
 

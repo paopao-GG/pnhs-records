@@ -10,12 +10,30 @@ grades, and print a correctly formatted SF10.
 ## Running it
 
 ```bash
-npm install     # first time only
-npm run dev     # http://localhost:3000
+npm install         # first time only
+npm run db:migrate  # create/upgrade the database
+npm run dev         # http://localhost:3000
 ```
 
+**The app requires a sign-in.** Create the first account once, from this machine:
+
+```bash
+# PowerShell
+$env:PNHS_ADMIN_PASSWORD = 'a long passphrase you will remember'
+npm run create-admin -- --username registrar --name "Hilda S. Secillano"
+```
+
+The password comes from the environment rather than an argument so it does not land in your
+shell history. Every account after that is created from **Accounts** in the app, by an admin.
+
 The database and the school's own details (name, ID, district, division, region, principal)
-are created automatically on first run.
+are created by `db:migrate`. Development also applies the schema on first use, so `npm run dev`
+alone works on a fresh clone — but run `db:migrate` after any schema change, and always before
+deploying.
+
+By default everything lives in a local file at `data/pnhs.db`. Set `TURSO_DATABASE_URL` and
+`TURSO_AUTH_TOKEN` to point the same code at a hosted libSQL database instead; nothing else
+changes.
 
 ## Importing
 
@@ -76,6 +94,8 @@ computed.
 | Command | What it does |
 |---|---|
 | `npm run dev` | Start the app |
+| `npm run db:migrate` | Apply the schema and any pending migrations, and report what changed |
+| `npm run create-admin` | Create the first admin account (see above) |
 | `npm run import:dry` | Parse a folder of SF10 files and report what would be imported, writing nothing |
 | `npm run roundtrip` | Prove file → database → printed form loses nothing |
 | `npm test` | Check grade arithmetic against the template's formulas |
@@ -91,8 +111,10 @@ lib/xlsx/               Zip-level workbook reader/writer (style-preserving)
 lib/sf10/               Cell maps for both forms, the Sf10Record contract, parser, exporter
 lib/import/             Import orchestration — hashing, dedup, issue recording
 lib/db/                 Schema access and the DB -> Sf10Record bridge
+lib/db/client.ts        One libSQL driver, pointed at a local file or a hosted database
+lib/auth/                Sign-in: password hashing, sessions, lockout, the requireUser guard
 lib/grading.ts          DepEd grade rules, used by the UI and re-run on save
-db/schema.sql           Eight tables
+db/schema.sql           Twelve tables
 docs/technical-design.md  How and why it works — read before changing lib/sf10 or lib/xlsx
 templates/              The school's official SF10 files — treat as read-only
 data/pnhs.db            The records database (git-ignored)
@@ -102,11 +124,26 @@ data/pnhs.db            The records database (git-ignored)
 constraints the DepEd form imposes, the invariants that must not be broken, and the bugs that
 have already been paid for once.
 
+## Accounts
+
+Two roles. Both can search, view, print, import, add, edit and delete; an **admin** can also
+issue accounts, reset passwords and deactivate people.
+
+Every page, server action and API endpoint checks the session for itself. `middleware.ts` only
+redirects a visitor with no cookie to the sign-in page — it runs on the Edge runtime and cannot
+verify anything, so it is a convenience, not the guard. **Anything added later that touches
+learner data starts with `requireUser()`.**
+
+Sign-ins are locked out for 15 minutes after 5 failures, counted in the database rather than in
+memory so the limit still holds when more than one server instance is running. Changing a
+password or deactivating an account ends that person's other sessions immediately.
+
+Keep **two** admin accounts. Only an admin can issue accounts or reset a password, so a single
+admin who is away is a system nobody can administer.
+
 ## Notes for the next build
 
-- **The importer** — reading the school's existing filled SF10 files into the database. The
-  cell maps needed for it already exist; this is the main remaining piece before real use.
-- **Deployment** — `data/` currently sits inside a OneDrive-synced folder. Before this runs
-  for real, move the database somewhere unsynced: SQLite and file-sync tools corrupt each
-  other.
-- Not yet built: remedial-class records, the certification section, backups, access PIN.
+- **Deployment** — `data/` currently sits inside a OneDrive-synced folder. While the database
+  is a local file, move it somewhere unsynced: SQLite and file-sync tools corrupt each other.
+  Pointing at a hosted database (`TURSO_DATABASE_URL`) sidesteps this entirely.
+- Not yet built: remedial-class records, the certification section, backups.

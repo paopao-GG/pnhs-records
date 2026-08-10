@@ -6,20 +6,24 @@
   "description": "SF10 permanent record system for Pantao National High School",
   "scripts": {
     "dev": "next dev",
+    "db:migrate": "node scripts/migrate.ts",
     "build": "next build",
     "start": "next start",
     "spike": "node scripts/spike-fill.ts",
     "verify": "node scripts/verify-fidelity.ts",
     "check": "node scripts/check-export.ts",
-    "test": "node scripts/test-grading.ts && node scripts/test-migrations.ts && node scripts/test-f137.ts",
+    "test": "node scripts/test-grading.ts && node scripts/test-migrations.ts && node scripts/test-f137.ts && node scripts/test-auth.ts",
     "import:dry": "node scripts/import-dry-run.ts",
     "roundtrip": "node scripts/check-roundtrip.ts",
     "test:migrations": "node scripts/test-migrations.ts",
     "check:ga": "node scripts/check-general-average.ts",
     "test:f137": "node scripts/test-f137.ts",
-    "reimport:f137": "node scripts/reimport-f137.ts"
+    "reimport:f137": "node scripts/reimport-f137.ts",
+    "test:auth": "node scripts/test-auth.ts",
+    "create-admin": "node scripts/create-admin.ts"
   },
   "dependencies": {
+    "@libsql/client": "^0.17.4",
     "fflate": "^0.8.2",
     "next": "^15.5.22",
     "react": "^19.2.8",

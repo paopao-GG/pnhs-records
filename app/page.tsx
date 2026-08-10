@@ -1,10 +1,13 @@
 import { listStudents } from "@/lib/db/queries.ts";
+import { requireUser } from "@/lib/auth/current-user.ts";
 import { StudentSearch } from "./_components/student-search.tsx";
 
 export const dynamic = "force-dynamic";
 
-export default function HomePage() {
-  const students = listStudents();
+export default async function HomePage() {
+  await requireUser();
+
+  const students = await listStudents();
 
   return (
     <main className="page">
@@ -20,7 +23,7 @@ export default function HomePage() {
       <div className="foot">
         <span>School ID 301860</span>
         <span>3rd Dist.–Libon West · Albay · Region V</span>
-        <span>Demonstration data — no actual learner information</span>
+        <span>Learner records — handle as confidential</span>
       </div>
     </main>
   );

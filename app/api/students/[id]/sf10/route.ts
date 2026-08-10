@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { buildSf10Record } from "@/lib/db/to-sf10-record.ts";
 import { fillJhs, fillShs } from "@/lib/sf10/export.ts";
 import { getStudent } from "@/lib/db/queries.ts";
+import { requireUserForApi } from "@/lib/auth/current-user.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +26,11 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // 401 rather than a redirect: a client following a redirect to the sign-in page would get
+  // HTTP 200 and an HTML form where it asked for a workbook.
+  const auth = await requireUserForApi();
+  if (auth.response) return auth.response;
+
   const { id } = await params;
   const studentId = Number(id);
   if (!Number.isInteger(studentId)) {
@@ -50,10 +56,10 @@ export async function GET(
     return new Response("levels must be a comma-separated list of grade levels", { status: 400 });
   }
 
-  const student = getStudent(studentId);
+  const student = await getStudent(studentId);
   if (!student) return new Response("Student not found", { status: 404 });
 
-  const record = buildSf10Record(studentId, form, levels);
+  const record = await buildSf10Record(studentId, form, levels);
   if (!record || record.terms.length === 0) {
     const scope = levels ? `grade ${levels.join(", ")}` : form.toUpperCase();
     return new Response(

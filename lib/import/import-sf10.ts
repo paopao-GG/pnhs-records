@@ -87,11 +87,18 @@ export function folderExists(folder: string): boolean {
   }
 }
 
-/** Import every SF10 in a folder. Safe to call repeatedly on the same folder. */
-export function importFolder(folder: string): ImportSummary {
-  const results = listSf10Files(folder).map((filename) =>
-    importOneFile(join(folder, filename), filename),
-  );
+/**
+ * Import every SF10 in a folder. Safe to call repeatedly on the same folder.
+ *
+ * Sequential rather than concurrent, deliberately: two files for the same learner must not
+ * race, and the school's byte-identical duplicate pair relies on the first one landing before
+ * the second is checked.
+ */
+export async function importFolder(folder: string): Promise<ImportSummary> {
+  const results: FileResult[] = [];
+  for (const filename of listSf10Files(folder)) {
+    results.push(await importOneFile(join(folder, filename), filename));
+  }
 
   return {
     folder,
@@ -104,13 +111,13 @@ export function importFolder(folder: string): ImportSummary {
   };
 }
 
-export function importOneFile(path: string, filename: string): FileResult {
+export async function importOneFile(path: string, filename: string): Promise<FileResult> {
   const bytes = readFileSync(path);
   return importBytes(bytes, filename);
 }
 
-export function importBytes(bytes: Uint8Array, filename: string): FileResult {
-  const db = getDb();
+export async function importBytes(bytes: Uint8Array, filename: string): Promise<FileResult> {
+  const db = await getDb();
   const sha256 = createHash("sha256").update(bytes).digest("hex");
 
   /*
@@ -123,23 +130,23 @@ export function importBytes(bytes: Uint8Array, filename: string): FileResult {
    * Restricting to successful statuses also lets a file that previously failed to parse be
    * retried once the reason it failed is fixed.
    */
-  const already = db
-    .prepare(
-      `SELECT f.id, f.filename, f.student_id
-         FROM import_files f
-         JOIN students s ON s.id = f.student_id
-        WHERE f.sha256 = ?
-          AND f.status IN ('imported', 'updated')`,
-    )
-    .get(sha256) as { id: number; filename: string; student_id: number | null } | undefined;
+  const found = await db.execute({
+    sql: `SELECT f.id, f.filename, f.student_id
+            FROM import_files f
+            JOIN students s ON s.id = f.student_id
+           WHERE f.sha256 = ?
+             AND f.status IN ('imported', 'updated')`,
+    args: [sha256],
+  });
 
-  if (already) {
+  if (found.rows[0]) {
+    const already = found.rows[0];
     return {
       filename,
       status: "duplicate",
-      studentId: already.student_id ?? undefined,
+      studentId: already.student_id == null ? undefined : Number(already.student_id),
       issues: [],
-      error: `Identical to a file already imported (${already.filename}).`,
+      error: `Identical to a file already imported (${String(already.filename)}).`,
     };
   }
 
@@ -167,7 +174,7 @@ export function importBytes(bytes: Uint8Array, filename: string): FileResult {
       err instanceof NotADocxError
         ? err.message
         : `Could not read this file: ${err instanceof Error ? err.message : String(err)}`;
-    recordFile(sha256, filename, "unknown", null, "failed", message);
+    await recordFile(sha256, filename, "unknown", null, "failed", message);
     return { filename, status: "failed", issues: [], error: message };
   }
 
@@ -176,24 +183,26 @@ export function importBytes(bytes: Uint8Array, filename: string): FileResult {
   const fatal = issues.filter((i) => i.severity === "error");
   if (!record.student.lrn || fatal.length > 0) {
     const message = fatal[0]?.message ?? "No LRN on the form.";
-    const fileId = recordFile(sha256, filename, form, null, "failed", message);
-    saveIssues(fileId, null, issues);
+    const fileId = await recordFile(sha256, filename, form, null, "failed", message);
+    await saveIssues(fileId, null, issues);
     return { filename, status: "failed", issues, error: message };
   }
 
-  const existing = db
-    .prepare(`SELECT id FROM students WHERE lrn = ?`)
-    .get(record.student.lrn) as { id: number } | undefined;
+  const match = await db.execute({
+    sql: `SELECT id FROM students WHERE lrn = ?`,
+    args: [record.student.lrn],
+  });
+  const existingId = match.rows[0] ? Number(match.rows[0].id) : undefined;
 
-  const studentId = writeRecord(record, form, attendance, existing?.id);
-  const status: ImportStatus = existing ? "updated" : "imported";
+  const studentId = await writeRecord(record, form, attendance, existingId);
+  const status: ImportStatus = existingId ? "updated" : "imported";
 
   // Keep the original. For Form 137 it is the only reissuable artefact — the record cannot be
   // reprinted onto a modern SF10 — and for SF10 it makes a future re-parse possible without
   // asking the registrar for files again.
   const storedPath = storeOriginal(bytes, filename, sha256);
-  const fileId = recordFile(sha256, filename, form, studentId, status, null, storedPath);
-  saveIssues(fileId, studentId, issues);
+  const fileId = await recordFile(sha256, filename, form, studentId, status, null, storedPath);
+  await saveIssues(fileId, studentId, issues);
 
   return {
     filename,
@@ -215,199 +224,231 @@ export function importBytes(bytes: Uint8Array, filename: string): FileResult {
  * 11-12 alone; an SHS form does the reverse. That is what lets a learner who attended both
  * exist as one record built from two files, in either import order.
  */
-function writeRecord(
+async function writeRecord(
   record: Sf10Record,
   form: Sf10Form,
   attendance: AttendanceRecord[][],
   existingId?: number,
-): number {
-  const db = getDb();
+): Promise<number> {
+  const db = await getDb();
   const s = record.student;
   const levelClause = levelsOwnedBy(form);
 
-  db.exec("BEGIN");
+  const tx = await db.transaction("write");
   try {
     let studentId: number;
 
     if (existingId) {
       studentId = existingId;
-      db.prepare(
-        `UPDATE students
-            SET last_name = ?, first_name = ?, middle_name = ?, name_ext = ?,
-                sex = ?, birthdate = ?, lrn_placeholder = ?,
-                birthplace_province = ?, birthplace_town = ?, birthplace_barrio = ?,
-                guardian_name = ?, guardian_occupation = ?, guardian_address = ?,
-                updated_at = datetime('now')
-          WHERE id = ?`,
-      ).run(
-        s.lastName,
-        s.firstName,
-        s.middleName ?? null,
-        s.nameExt ?? null,
-        s.sex ?? null,
-        s.birthdate ?? null,
-        s.lrnPlaceholder ? 1 : 0,
-        s.birthplaceProvince ?? null,
-        s.birthplaceTown ?? null,
-        s.birthplaceBarrio ?? null,
-        s.guardianName ?? null,
-        s.guardianOccupation ?? null,
-        s.guardianAddress ?? null,
-        studentId,
-      );
+      await tx.execute({
+        sql: `UPDATE students
+                 SET last_name = ?, first_name = ?, middle_name = ?, name_ext = ?,
+                     sex = ?, birthdate = ?, lrn_placeholder = ?,
+                     birthplace_province = ?, birthplace_town = ?, birthplace_barrio = ?,
+                     guardian_name = ?, guardian_occupation = ?, guardian_address = ?,
+                     updated_at = datetime('now')
+               WHERE id = ?`,
+        args: [
+          s.lastName,
+          s.firstName,
+          s.middleName ?? null,
+          s.nameExt ?? null,
+          s.sex ?? null,
+          s.birthdate ?? null,
+          s.lrnPlaceholder ? 1 : 0,
+          s.birthplaceProvince ?? null,
+          s.birthplaceTown ?? null,
+          s.birthplaceBarrio ?? null,
+          s.guardianName ?? null,
+          s.guardianOccupation ?? null,
+          s.guardianAddress ?? null,
+          studentId,
+        ],
+      });
     } else {
-      db.prepare(
-        `INSERT INTO students
-           (lrn, last_name, first_name, middle_name, name_ext, sex, birthdate, lrn_placeholder,
-            birthplace_province, birthplace_town, birthplace_barrio,
-            guardian_name, guardian_occupation, guardian_address)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        s.lrn,
-        s.lastName,
-        s.firstName,
-        s.middleName ?? null,
-        s.nameExt ?? null,
-        s.sex ?? null,
-        s.birthdate ?? null,
-        s.lrnPlaceholder ? 1 : 0,
-        s.birthplaceProvince ?? null,
-        s.birthplaceTown ?? null,
-        s.birthplaceBarrio ?? null,
-        s.guardianName ?? null,
-        s.guardianOccupation ?? null,
-        s.guardianAddress ?? null,
-      );
-      studentId = (db.prepare(`SELECT last_insert_rowid() AS id`).get() as { id: number }).id;
+      const created = await tx.execute({
+        sql: `INSERT INTO students
+                (lrn, last_name, first_name, middle_name, name_ext, sex, birthdate, lrn_placeholder,
+                 birthplace_province, birthplace_town, birthplace_barrio,
+                 guardian_name, guardian_occupation, guardian_address)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              RETURNING id`,
+        args: [
+          s.lrn,
+          s.lastName,
+          s.firstName,
+          s.middleName ?? null,
+          s.nameExt ?? null,
+          s.sex ?? null,
+          s.birthdate ?? null,
+          s.lrnPlaceholder ? 1 : 0,
+          s.birthplaceProvince ?? null,
+          s.birthplaceTown ?? null,
+          s.birthplaceBarrio ?? null,
+          s.guardianName ?? null,
+          s.guardianOccupation ?? null,
+          s.guardianAddress ?? null,
+        ],
+      });
+      studentId = Number(created.rows[0].id);
     }
 
     // This form owns its own grade levels, so replace them wholesale. The other form's levels
     // are deliberately left alone - re-importing a learner's SHS record must not erase the JHS
     // years imported from a different file.
-    db.prepare(
-      `DELETE FROM term_subjects
-        WHERE term_id IN (SELECT id FROM enrollment_terms WHERE student_id = ? AND ${levelClause})`,
-    ).run(studentId);
-    db.prepare(`DELETE FROM enrollment_terms WHERE student_id = ? AND ${levelClause}`).run(
-      studentId,
+    //
+    // Attendance goes with the terms it belongs to. It is not covered by the term_subjects
+    // delete, and leaving it would attach a 1996 attendance row to the term that replaced it.
+    await tx.batch(
+      [
+        {
+          sql: `DELETE FROM term_subjects
+                 WHERE term_id IN (SELECT id FROM enrollment_terms
+                                    WHERE student_id = ? AND ${levelClause})`,
+          args: [studentId],
+        },
+        {
+          sql: `DELETE FROM term_attendance
+                 WHERE term_id IN (SELECT id FROM enrollment_terms
+                                    WHERE student_id = ? AND ${levelClause})`,
+          args: [studentId],
+        },
+        {
+          sql: `DELETE FROM enrollment_terms WHERE student_id = ? AND ${levelClause}`,
+          args: [studentId],
+        },
+      ],
     );
 
-    const insTerm = db.prepare(
-      `INSERT INTO enrollment_terms
-         (student_id, level, semester, school_year, section, adviser, track_strand,
-          school_name, school_id, district, division, region, promotion_remark, general_average,
-          curriculum)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    const insAttendance = db.prepare(
-      `INSERT INTO term_attendance (term_id, ordinal, month, days_of_school, days_present)
-       VALUES (?, ?, ?, ?, ?)`,
-    );
+    const INSERT_TERM = `INSERT INTO enrollment_terms
+        (student_id, level, semester, school_year, section, adviser, track_strand,
+         school_name, school_id, district, division, region, promotion_remark, general_average,
+         curriculum)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      RETURNING id`;
     // All four quarters: SHS uses only q1/q2 and leaves the rest null, JHS uses all four.
     // `final_rating` is stored only where the template has no formula for it - JHS Homeroom
     // Guidance and CAT - and the parser supplies it for exactly those rows.
-    const insSubject = db.prepare(
-      `INSERT INTO term_subjects
-         (term_id, ordinal, subject_name, category, q1, q2, q3, q4, final_rating, remarks,
-          units_earned, extra_curricular)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
+    const INSERT_SUBJECT = `INSERT INTO term_subjects
+        (term_id, ordinal, subject_name, category, q1, q2, q3, q4, final_rating, remarks,
+         units_earned, extra_curricular)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    const INSERT_ATTENDANCE = `INSERT INTO term_attendance
+        (term_id, ordinal, month, days_of_school, days_present)
+      VALUES (?, ?, ?, ?, ?)`;
 
-    record.terms.forEach((term, termIndex) => {
-      insTerm.run(
-        studentId,
-        term.level,
-        term.semester ?? null,
-        term.schoolYear ?? null,
-        term.section ?? null,
-        term.adviser ?? null,
-        term.trackStrand ?? null,
-        term.schoolName ?? null,
-        term.schoolId ?? null,
-        term.district ?? null,
-        term.division ?? null,
-        term.region ?? null,
-        term.promotionRemark ?? null,
-        term.generalAverage ?? null,
-        term.curriculum ?? "k12",
-      );
-      const termId = (db.prepare(`SELECT last_insert_rowid() AS id`).get() as { id: number }).id;
-      term.subjects.forEach((sub, i) =>
-        insSubject.run(
-          termId,
-          i,
-          sub.name,
-          sub.category ?? null,
-          sub.q1 ?? null,
-          sub.q2 ?? null,
-          sub.q3 ?? null,
-          sub.q4 ?? null,
-          sub.finalRating ?? null,
-          sub.remarks ?? null,
-          sub.unitsEarned ?? null,
-          sub.extraCurricular ?? null,
-        ),
-      );
+    for (const [termIndex, term] of record.terms.entries()) {
+      const createdTerm = await tx.execute({
+        sql: INSERT_TERM,
+        args: [
+          studentId,
+          term.level,
+          term.semester ?? null,
+          term.schoolYear ?? null,
+          term.section ?? null,
+          term.adviser ?? null,
+          term.trackStrand ?? null,
+          term.schoolName ?? null,
+          term.schoolId ?? null,
+          term.district ?? null,
+          term.division ?? null,
+          term.region ?? null,
+          term.promotionRemark ?? null,
+          term.generalAverage ?? null,
+          term.curriculum ?? "k12",
+        ],
+      });
+      const termId = Number(createdTerm.rows[0].id);
 
-      // Form 137 only; SF10 does not record attendance.
-      (attendance[termIndex] ?? []).forEach((a, i) =>
-        insAttendance.run(termId, i, a.month, a.daysOfSchool ?? null, a.daysPresent ?? null),
-      );
-    });
+      // One batch per term rather than a statement at a time. A Form 137 carries four years of
+      // thirteen subjects and ten attendance months each; sent individually that is ninety-odd
+      // network round trips inside a single import.
+      const children = [
+        ...term.subjects.map((sub, i) => ({
+          sql: INSERT_SUBJECT,
+          args: [
+            termId,
+            i,
+            sub.name,
+            sub.category ?? null,
+            sub.q1 ?? null,
+            sub.q2 ?? null,
+            sub.q3 ?? null,
+            sub.q4 ?? null,
+            sub.finalRating ?? null,
+            sub.remarks ?? null,
+            sub.unitsEarned ?? null,
+            sub.extraCurricular ?? null,
+          ],
+        })),
+        // Form 137 only; SF10 does not record attendance.
+        ...(attendance[termIndex] ?? []).map((a, i) => ({
+          sql: INSERT_ATTENDANCE,
+          args: [termId, i, a.month, a.daysOfSchool ?? null, a.daysPresent ?? null],
+        })),
+      ];
+      if (children.length > 0) await tx.batch(children);
+    }
 
     const el = record.shsEligibility;
     if (el) {
-      db.prepare(`DELETE FROM shs_eligibility WHERE student_id = ?`).run(studentId);
-      db.prepare(
-        `INSERT INTO shs_eligibility
-           (student_id, shs_admission_date, jhs_completer_gen_ave, hs_completer_gen_ave,
-            graduation_date, prev_school_name, prev_school_address, pept_rating, als_rating,
-            other_credential, exam_date, clc_name_address)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        studentId,
-        el.shsAdmissionDate ?? null,
-        toNumber(el.jhsCompleterGenAve),
-        toNumber(el.hsCompleterGenAve),
-        el.graduationDate ?? null,
-        el.prevSchoolName ?? null,
-        el.prevSchoolAddress ?? null,
-        el.peptRating ?? null,
-        el.alsRating ?? null,
-        el.otherCredential ?? null,
-        el.examDate ?? null,
-        el.clcNameAddress ?? null,
-      );
+      await tx.batch([
+        { sql: `DELETE FROM shs_eligibility WHERE student_id = ?`, args: [studentId] },
+        {
+          sql: `INSERT INTO shs_eligibility
+                  (student_id, shs_admission_date, jhs_completer_gen_ave, hs_completer_gen_ave,
+                   graduation_date, prev_school_name, prev_school_address, pept_rating, als_rating,
+                   other_credential, exam_date, clc_name_address)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          args: [
+            studentId,
+            el.shsAdmissionDate ?? null,
+            toNumber(el.jhsCompleterGenAve),
+            toNumber(el.hsCompleterGenAve),
+            el.graduationDate ?? null,
+            el.prevSchoolName ?? null,
+            el.prevSchoolAddress ?? null,
+            el.peptRating ?? null,
+            el.alsRating ?? null,
+            el.otherCredential ?? null,
+            el.examDate ?? null,
+            el.clcNameAddress ?? null,
+          ],
+        },
+      ]);
     }
 
     const jel = record.jhsEligibility;
     if (jel) {
-      db.prepare(`DELETE FROM jhs_eligibility WHERE student_id = ?`).run(studentId);
-      db.prepare(
-        `INSERT INTO jhs_eligibility
-           (student_id, elem_school_name, elem_school_id, elem_school_address,
-            elem_general_average, citation, pept_rating, als_rating, other_credential,
-            exam_date, testing_center)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        studentId,
-        jel.elemSchoolName ?? null,
-        jel.elemSchoolId ?? null,
-        jel.elemSchoolAddress ?? null,
-        toNumber(jel.elemGeneralAverage),
-        jel.citation ?? null,
-        jel.peptRating ?? null,
-        jel.alsRating ?? null,
-        jel.otherCredential ?? null,
-        jel.examDate ?? null,
-        jel.testingCenter ?? null,
-      );
+      await tx.batch([
+        { sql: `DELETE FROM jhs_eligibility WHERE student_id = ?`, args: [studentId] },
+        {
+          sql: `INSERT INTO jhs_eligibility
+                  (student_id, elem_school_name, elem_school_id, elem_school_address,
+                   elem_general_average, citation, pept_rating, als_rating, other_credential,
+                   exam_date, testing_center)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          args: [
+            studentId,
+            jel.elemSchoolName ?? null,
+            jel.elemSchoolId ?? null,
+            jel.elemSchoolAddress ?? null,
+            toNumber(jel.elemGeneralAverage),
+            jel.citation ?? null,
+            jel.peptRating ?? null,
+            jel.alsRating ?? null,
+            jel.otherCredential ?? null,
+            jel.examDate ?? null,
+            jel.testingCenter ?? null,
+          ],
+        },
+      ]);
     }
 
-    db.exec("COMMIT");
+    await tx.commit();
     return studentId;
   } catch (err) {
-    db.exec("ROLLBACK");
+    await tx.rollback().catch(() => {});
     throw err;
   }
 }
@@ -438,7 +479,7 @@ function storeOriginal(bytes: Uint8Array, filename: string, sha256: string): str
   }
 }
 
-function recordFile(
+async function recordFile(
   sha256: string,
   filename: string,
   form: string,
@@ -446,44 +487,58 @@ function recordFile(
   status: string,
   notes: string | null,
   storedPath: string | null = null,
-): number {
-  const db = getDb();
+): Promise<number> {
+  const db = await getDb();
 
   // Upsert, because the row for a hash now outlives the learner it produced: re-importing a
   // file whose record was deleted must update that row rather than collide with UNIQUE(sha256).
-  db.prepare(
-    `INSERT INTO import_files (filename, sha256, form, student_id, status, notes, stored_path)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(sha256) DO UPDATE SET
-       filename    = excluded.filename,
-       form        = excluded.form,
-       student_id  = excluded.student_id,
-       status      = excluded.status,
-       notes       = excluded.notes,
-       stored_path = COALESCE(excluded.stored_path, import_files.stored_path),
-       imported_at = datetime('now')`,
-  ).run(filename, sha256, form, studentId, status, notes, storedPath);
-
-  // last_insert_rowid() is meaningless after DO UPDATE, so look the row up by its hash.
-  return (db.prepare(`SELECT id FROM import_files WHERE sha256 = ?`).get(sha256) as { id: number })
-    .id;
+  //
+  // RETURNING gives the row's id whichever branch ran - last_insert_rowid() would be meaningless
+  // after DO UPDATE, and a follow-up SELECT would be a second round trip.
+  const result = await db.execute({
+    sql: `INSERT INTO import_files (filename, sha256, form, student_id, status, notes, stored_path)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(sha256) DO UPDATE SET
+            filename    = excluded.filename,
+            form        = excluded.form,
+            student_id  = excluded.student_id,
+            status      = excluded.status,
+            notes       = excluded.notes,
+            stored_path = COALESCE(excluded.stored_path, import_files.stored_path),
+            imported_at = datetime('now')
+          RETURNING id`,
+    args: [filename, sha256, form, studentId, status, notes, storedPath],
+  });
+  return Number(result.rows[0].id);
 }
 
-function saveIssues(fileId: number, studentId: number | null, issues: Issue[]): void {
-  const db = getDb();
+async function saveIssues(
+  fileId: number,
+  studentId: number | null,
+  issues: Issue[],
+): Promise<void> {
+  const db = await getDb();
 
   // A re-imported file re-raises its own issues, so clear the previous set first rather than
   // stacking a second copy onto the review list.
-  db.prepare(`DELETE FROM import_issues WHERE import_file_id = ?`).run(fileId);
-
-  if (issues.length === 0) return;
-
-  const stmt = db.prepare(
-    `INSERT INTO import_issues
-       (import_file_id, student_id, severity, field, cell, raw_value, message)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  await db.batch(
+    [
+      { sql: `DELETE FROM import_issues WHERE import_file_id = ?`, args: [fileId] },
+      ...issues.map((i) => ({
+        sql: `INSERT INTO import_issues
+                (import_file_id, student_id, severity, field, cell, raw_value, message)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          fileId,
+          studentId,
+          i.severity,
+          i.field ?? null,
+          i.cell ?? null,
+          i.rawValue ?? null,
+          i.message,
+        ],
+      })),
+    ],
+    "write",
   );
-  for (const i of issues) {
-    stmt.run(fileId, studentId, i.severity, i.field ?? null, i.cell ?? null, i.rawValue ?? null, i.message);
-  }
 }

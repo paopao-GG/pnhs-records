@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { ImportPanel } from "@/app/_components/import-panel.tsx";
 import { getImportHistory, countOpenIssues } from "@/lib/db/queries.ts";
+import { requireUser } from "@/lib/auth/current-user.ts";
 
 export const dynamic = "force-dynamic";
 
-export default function ImportPage() {
-  const history = getImportHistory(12);
-  const openIssues = countOpenIssues();
+export default async function ImportPage() {
+  await requireUser();
+
+  const [history, openIssues] = await Promise.all([getImportHistory(12), countOpenIssues()]);
 
   return (
     <main className="page">
@@ -30,8 +32,8 @@ export default function ImportPage() {
         safe — a file counts as already imported only while the learner it produced still
         exists, so deleting a record and re-importing its file brings the record back.
         <br />
-        <strong>SHS forms only for now.</strong> JHS import needs a real filled SF10-JHS to
-        build against.
+        <strong>Three formats are read:</strong> SF10-SHS and SF10-JHS (.xlsx), and Form 137
+        (.docx). The format is detected from the file's contents, not its name.
       </div>
 
       <ImportPanel defaultFolder="sf10-files" />

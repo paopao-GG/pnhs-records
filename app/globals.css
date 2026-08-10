@@ -1029,3 +1029,108 @@ mark {
   border-radius: 0 var(--radius) var(--radius) 0;
   margin-bottom: 22px;
 }
+
+/* ------------------------------------------------------- accounts and sign-in */
+
+/* Who is signed in, in the masthead. */
+.who {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.2;
+  margin-left: 10px;
+  padding-left: 14px;
+  border-left: 1px solid var(--rule);
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.who-role {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.masthead nav form {
+  display: inline-flex;
+}
+
+/* The sign-in page carries no navigation, so it is centred rather than left-aligned. */
+.login-page {
+  max-width: 460px;
+}
+
+.login-card {
+  margin-top: 8vh;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.login-form label {
+  font-size: 11.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 600;
+  margin-top: 10px;
+}
+
+.login-form button {
+  margin-top: 18px;
+  justify-content: center;
+}
+
+.login-error {
+  border-left: 3px solid var(--seal);
+  background: color-mix(in srgb, var(--seal) 8%, transparent);
+  padding: 9px 12px;
+  font-size: 13px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  margin: 14px 0 0;
+}
+
+.account-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 720px;
+}
+
+.account-form label {
+  display: block;
+  font-size: 11.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.field-row {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.field-row > div {
+  flex: 1 1 180px;
+}
+
+.account-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.account-actions .login-error,
+.account-actions .notice {
+  margin: 0;
+  flex-basis: 100%;
+}

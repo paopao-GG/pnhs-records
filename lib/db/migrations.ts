@@ -1,8 +1,8 @@
 /**
  * Schema migrations.
  *
- * `db/schema.sql` is all `CREATE TABLE IF NOT EXISTS`, re-run on every boot. That is
- * idempotent and self-repairing for *new* tables, and it is why adding one needs nothing here.
+ * `db/schema.sql` is all `CREATE TABLE IF NOT EXISTS`, applied on setup. That is idempotent and
+ * self-repairing for *new* tables, and it is why adding one needs nothing here.
  *
  * What it cannot do is change a table that already exists:
  *
@@ -18,17 +18,22 @@
  *
  * Append to `MIGRATIONS` with the next number. Never edit or renumber an entry that has run
  * anywhere — fix a bad migration with a new one. Each runs in its own transaction, so a
- * failure leaves `user_version` untouched and the database consistent.
+ * failure leaves `user_version` untouched and the database consistent. That holds against the
+ * hosted database too: `ALTER TABLE` and `PRAGMA user_version` both roll back inside a libSQL
+ * transaction.
  *
  * Back up before running against real data.
  */
 
-import type { DatabaseSync } from "node:sqlite";
+import type { Client, Transaction } from "@libsql/client";
+
+/** Either a plain connection or an open transaction - migrations run inside one. */
+type Runner = Pick<Client | Transaction, "execute">;
 
 export interface Migration {
   version: number;
   name: string;
-  up: (db: DatabaseSync) => void;
+  up: (db: Runner) => Promise<void>;
 }
 
 /** Ordered and append-only. */
@@ -36,7 +41,7 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 1,
     name: "enrollment_terms.general_average",
-    up: (db) => {
+    up: async (db) => {
       /*
        * The general average as the SOURCE DOCUMENT carries it, when a record was imported.
        *
@@ -48,13 +53,13 @@ export const MIGRATIONS: Migration[] = [
        * So we keep what the form says and only compute when there is nothing stored — which
        * is the case for records encoded in the app, where our own arithmetic is the authority.
        */
-      addColumnIfMissing(db, "enrollment_terms", "general_average", "REAL");
+      await addColumnIfMissing(db, "enrollment_terms", "general_average", "REAL");
     },
   },
   {
     version: 2,
     name: "form137 fields",
-    up: (db) => {
+    up: async (db) => {
       /*
        * Form 137 — the pre-K-12 Secondary Student's Permanent Record — carries data the SF10
        * schema has no home for.
@@ -67,20 +72,20 @@ export const MIGRATIONS: Migration[] = [
        * availableForms() decides print buttons from grade level alone, so without it a 1995
        * record would be offered a modern SF10 print.
        */
-      addColumnIfMissing(db, "students", "lrn_placeholder", "INTEGER NOT NULL DEFAULT 0");
-      addColumnIfMissing(db, "students", "birthplace_province", "TEXT");
-      addColumnIfMissing(db, "students", "birthplace_town", "TEXT");
-      addColumnIfMissing(db, "students", "birthplace_barrio", "TEXT");
-      addColumnIfMissing(db, "students", "guardian_name", "TEXT");
-      addColumnIfMissing(db, "students", "guardian_occupation", "TEXT");
-      addColumnIfMissing(db, "students", "guardian_address", "TEXT");
+      await addColumnIfMissing(db, "students", "lrn_placeholder", "INTEGER NOT NULL DEFAULT 0");
+      await addColumnIfMissing(db, "students", "birthplace_province", "TEXT");
+      await addColumnIfMissing(db, "students", "birthplace_town", "TEXT");
+      await addColumnIfMissing(db, "students", "birthplace_barrio", "TEXT");
+      await addColumnIfMissing(db, "students", "guardian_name", "TEXT");
+      await addColumnIfMissing(db, "students", "guardian_occupation", "TEXT");
+      await addColumnIfMissing(db, "students", "guardian_address", "TEXT");
 
-      addColumnIfMissing(db, "enrollment_terms", "curriculum", "TEXT NOT NULL DEFAULT 'k12'");
+      await addColumnIfMissing(db, "enrollment_terms", "curriculum", "TEXT NOT NULL DEFAULT 'k12'");
 
-      addColumnIfMissing(db, "term_subjects", "units_earned", "REAL");
-      addColumnIfMissing(db, "term_subjects", "extra_curricular", "TEXT");
+      await addColumnIfMissing(db, "term_subjects", "units_earned", "REAL");
+      await addColumnIfMissing(db, "term_subjects", "extra_curricular", "TEXT");
 
-      addColumnIfMissing(db, "import_files", "stored_path", "TEXT");
+      await addColumnIfMissing(db, "import_files", "stored_path", "TEXT");
     },
   },
 ];
@@ -93,21 +98,21 @@ export const MIGRATIONS: Migration[] = [
  *  - the table does not exist yet, which means this is a brand-new database where `schema.sql`
  *    creates it with the column already included. Nothing to migrate.
  */
-export function addColumnIfMissing(
-  db: DatabaseSync,
+export async function addColumnIfMissing(
+  db: Runner,
   table: string,
   column: string,
   definition: string,
-): void {
-  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[];
-  if (cols.length === 0) return; // table not created yet
-  if (cols.some((c) => c.name === column)) return;
-  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+): Promise<void> {
+  const cols = await db.execute(`PRAGMA table_info(${table})`);
+  if (cols.rows.length === 0) return; // table not created yet
+  if (cols.rows.some((c) => c.name === column)) return;
+  await db.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
-export function currentVersion(db: DatabaseSync): number {
-  const row = db.prepare(`PRAGMA user_version`).get() as unknown as { user_version: number };
-  return row.user_version;
+export async function currentVersion(db: Runner): Promise<number> {
+  const result = await db.execute(`PRAGMA user_version`);
+  return Number(result.rows[0]?.user_version ?? 0);
 }
 
 export interface MigrationResult {
@@ -119,30 +124,30 @@ export interface MigrationResult {
 /**
  * Apply every migration newer than the database's recorded version.
  *
- * Called from getDb() after the schema pass. Running it twice is a no-op the second time.
+ * Called from applySchema() after the schema pass. Running it twice is a no-op the second time.
  */
-export function runMigrations(db: DatabaseSync): MigrationResult {
-  const from = currentVersion(db);
+export async function runMigrations(db: Client): Promise<MigrationResult> {
+  const from = await currentVersion(db);
   const applied: string[] = [];
 
   for (const migration of [...MIGRATIONS].sort((a, b) => a.version - b.version)) {
     if (migration.version <= from) continue;
 
-    db.exec("BEGIN");
+    const tx = await db.transaction("write");
     try {
-      migration.up(db);
+      await migration.up(tx);
       // PRAGMA does not accept a bound parameter, and version is a number we control.
-      db.exec(`PRAGMA user_version = ${migration.version}`);
-      db.exec("COMMIT");
+      await tx.execute(`PRAGMA user_version = ${migration.version}`);
+      await tx.commit();
       applied.push(`${migration.version}: ${migration.name}`);
     } catch (err) {
-      db.exec("ROLLBACK");
+      await tx.rollback().catch(() => {}); // a failed commit may already have closed it
       throw new Error(
         `migration ${migration.version} (${migration.name}) failed, database left at version ` +
-          `${currentVersion(db)}: ${err instanceof Error ? err.message : String(err)}`,
+          `${await currentVersion(db)}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
 
-  return { from, to: currentVersion(db), applied };
+  return { from, to: await currentVersion(db), applied };
 }

@@ -11,11 +11,15 @@
 
 import { revalidatePath } from "next/cache";
 import { importBytes, type FileResult, type ImportSummary } from "@/lib/import/import-sf10.ts";
+import { requireUserForApi } from "@/lib/auth/current-user.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
+  const auth = await requireUserForApi();
+  if (auth.response) return auth.response;
+
   let form: FormData;
   try {
     form = await request.formData();
@@ -31,19 +35,22 @@ export async function POST(request: Request) {
   const results: FileResult[] = [];
 
   for (const file of files) {
-    if (!file.name.toLowerCase().endsWith(".xlsx")) {
+    // .xlsx is SF10 (both variants), .docx is Form 137. The form itself is detected from the
+    // file's contents further in; this only rejects things that cannot be either.
+    const name = file.name.toLowerCase();
+    if (!name.endsWith(".xlsx") && !name.endsWith(".docx")) {
       results.push({
         filename: file.name,
         status: "failed",
         issues: [],
-        error: "Not an .xlsx file.",
+        error: "Not an .xlsx or .docx file.",
       });
       continue;
     }
 
     const bytes = new Uint8Array(await file.arrayBuffer());
     try {
-      results.push(importBytes(bytes, file.name));
+      results.push(await importBytes(bytes, file.name));
     } catch (err) {
       results.push({
         filename: file.name,

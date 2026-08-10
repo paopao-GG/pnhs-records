@@ -3,17 +3,18 @@ import { notFound } from "next/navigation";
 import {
   availableForms,
   countIssuesForStudent,
-  getAttendance,
+  getAttendanceForStudent,
   getDeletionSummary,
   getOriginalFile,
   getStudent,
-  getSubjects,
+  getSubjectsForStudent,
   getTerms,
   hasOldCurriculum,
   type AttendanceRow,
   type SubjectRow,
   type TermRow,
 } from "@/lib/db/queries.ts";
+import { requireUser } from "@/lib/auth/current-user.ts";
 import { DeleteRecord } from "@/app/_components/delete-record.tsx";
 import { PrintPanel } from "@/app/_components/print-panel.tsx";
 import { exactFinalRating, finalRating, generalAverage, isPassing } from "@/lib/grading.ts";
@@ -118,11 +119,19 @@ function Attendance({ rows }: { rows: AttendanceRow[] }) {
   );
 }
 
-function TermCard({ term, index }: { term: TermRow; index: number }) {
+function TermCard({
+  term,
+  index,
+  subjects,
+  attendance,
+}: {
+  term: TermRow;
+  index: number;
+  subjects: SubjectRow[];
+  attendance: AttendanceRow[];
+}) {
   const isOld = term.curriculum === "old";
   const isJhs = term.level <= 10;
-  const subjects = getSubjects(term.id);
-  const attendance = isOld ? getAttendance(term.id) : [];
   const showUnits = subjects.some((s) => s.units_earned != null);
   const resolved = subjects.map((s, i) => resolveFinal(s, i, isJhs));
   const finals = resolved.map((r) => r.display);
@@ -251,16 +260,27 @@ function TermCard({ term, index }: { term: TermRow; index: number }) {
 }
 
 export default async function StudentPage({ params }: { params: Promise<{ id: string }> }) {
+  await requireUser();
+
   const { id } = await params;
   const studentId = Number(id);
-  const student = getStudent(studentId);
+  const student = await getStudent(studentId);
   if (!student) notFound();
 
-  const terms = getTerms(studentId);
+  // Everything this page needs, fetched together. The per-term lookups this replaces were a
+  // network round trip each once the database stopped being a local file.
+  const [terms, subjectsByTerm, attendanceByTerm, issueCount, original, deletionSummary] =
+    await Promise.all([
+      getTerms(studentId),
+      getSubjectsForStudent(studentId),
+      getAttendanceForStudent(studentId),
+      countIssuesForStudent(studentId),
+      getOriginalFile(studentId),
+      getDeletionSummary(studentId),
+    ]);
+
   const forms = availableForms(terms);
-  const issueCount = countIssuesForStudent(studentId);
   const isOldRecord = hasOldCurriculum(terms);
-  const original = getOriginalFile(studentId);
 
   // Only offer levels the learner actually has, per form.
   const levelsByForm: Record<string, number[]> = {};
@@ -397,14 +417,22 @@ export default async function StudentPage({ params }: { params: Promise<{ id: st
           <div className="empty">No enrolment terms recorded yet.</div>
         </div>
       ) : (
-        terms.map((t, i) => <TermCard key={t.id} term={t} index={i} />)
+        terms.map((t, i) => (
+          <TermCard
+            key={t.id}
+            term={t}
+            index={i}
+            subjects={subjectsByTerm.get(t.id) ?? []}
+            attendance={t.curriculum === "old" ? (attendanceByTerm.get(t.id) ?? []) : []}
+          />
+        ))
       )}
 
       <DeleteRecord
         studentId={studentId}
         lrn={student.lrn}
         name={`${student.last_name}, ${given}`}
-        summary={getDeletionSummary(studentId)}
+        summary={deletionSummary}
       />
 
       <div className="foot">

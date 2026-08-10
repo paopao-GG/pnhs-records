@@ -1,9 +1,12 @@
 import Link from "next/link";
+import { requireUser } from "@/lib/auth/current-user.ts";
 import { NewStudentForm } from "@/app/_components/new-student-form.tsx";
 
 export const dynamic = "force-dynamic";
 
-export default function NewStudentPage() {
+export default async function NewStudentPage() {
+  await requireUser();
+
   return (
     <main className="page">
       <div className="page-head">

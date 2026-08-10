@@ -20,7 +20,11 @@ import { fullName, type Sf10Record } from "../lib/sf10/types.ts";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const FOLDER = resolve(process.argv[2] ?? join(ROOT, "sf10-files"));
-const TEMPLATES: Record<Sf10Form, string> = {
+/**
+ * Only the two printable forms. Form 137 has no template on purpose - an old-curriculum record
+ * is never reissued on a modern SF10 - so there is no round trip to measure for it.
+ */
+const TEMPLATES: Record<"jhs" | "shs", string> = {
   jhs: join(ROOT, "templates", "SF10-JHS.xlsx"),
   shs: join(ROOT, "templates", "SF10-SHS.xlsx"),
 };
@@ -105,6 +109,7 @@ for (const file of files) {
   } catch {
     continue; // import:dry reports unreadable files; this script only measures data loss
   }
+  if (form !== "jhs" && form !== "shs") continue; // Form 137 is archive-only, never reprinted
 
   const original = form === "jhs" ? parseJhsWorkbook(wb) : parseShsWorkbook(wb);
   if (original.termCount === 0) continue;

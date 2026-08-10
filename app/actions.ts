@@ -19,11 +19,11 @@ import {
   deleteSubject,
   getSchoolSettings,
   getStudent,
-  recordChange,
   resolveIssue,
-  updateSubjectField,
   updateStudent,
-  updateSubjectGrades,
+  updateSubjectField,
+  updateStudentWithHistory,
+  updateSubjectGradesMany,
   updateTerm,
 } from "@/lib/db/queries.ts";
 import {
@@ -35,6 +35,17 @@ import {
 } from "@/lib/grading.ts";
 import { jhsFinalRatingIsComputed, jhsLearningAreas } from "@/lib/sf10/jhs-map.ts";
 import { shsSubjectsFor } from "@/lib/sf10/subject-templates.ts";
+import { requireUser } from "@/lib/auth/current-user.ts";
+
+/*
+ * Every action below begins with `requireUser()`.
+ *
+ * A server action is a public HTTP endpoint with a generated name - not an internal function
+ * call. Hiding the button that invokes it protects nothing, exactly as hiding the SF10 print
+ * button did not stop the print endpoint answering for a Form 137 learner. Middleware cannot
+ * help either: it runs on the Edge runtime and cannot verify a cookie. If an action added later
+ * touches learner data, it starts with this line too.
+ */
 
 export interface SubjectEdit {
   id: number;
@@ -76,7 +87,9 @@ export interface RecordEdit {
  * browser - the client display and the stored value must not be able to drift apart.
  */
 export async function saveRecord(edit: RecordEdit): Promise<void> {
-  updateStudent(edit.studentId, {
+  await requireUser();
+
+  await updateStudent(edit.studentId, {
     lrn: edit.student.lrn.trim(),
     last_name: edit.student.lastName.trim().toUpperCase(),
     first_name: edit.student.firstName.trim().toUpperCase(),
@@ -92,7 +105,7 @@ export async function saveRecord(edit: RecordEdit): Promise<void> {
     // Exact, unrounded finals — the general average is computed from these and rounded once.
     const finals: (number | null)[] = [];
 
-    term.subjects.forEach((s, i) => {
+    const updates = term.subjects.map((s, i) => {
       const quarters = { q1: s.q1, q2: s.q2, q3: s.q3, q4: s.q4 };
       const computed = finalRating(quarters, level);
 
@@ -103,15 +116,17 @@ export async function saveRecord(edit: RecordEdit): Promise<void> {
       finals.push(storedFinal ?? exactFinalRating(quarters, level));
 
       // JHS prints a literal Passed/Failed; SHS computes it with its own formula.
-      updateSubjectGrades(
-        s.id,
-        { q1: s.q1, q2: s.q2, q3: s.q3, q4: s.q4 },
-        storedFinal,
-        isJhs ? jhsRemark(effective) : null,
-      );
+      return {
+        subjectId: s.id,
+        grades: quarters,
+        finalRating: storedFinal,
+        remarks: isJhs ? jhsRemark(effective) : null,
+      };
     });
 
-    updateTerm(term.id, {
+    await updateSubjectGradesMany(updates);
+
+    await updateTerm(term.id, {
       section: term.section?.trim() || null,
       adviser: term.adviser?.trim() || null,
       school_year: term.schoolYear?.trim() || null,
@@ -130,14 +145,16 @@ export async function saveRecord(edit: RecordEdit): Promise<void> {
  * endpoint, and this destroys a permanent academic record with no undo.
  */
 export async function deleteRecord(studentId: number, confirmLrn: string): Promise<void> {
-  const student = getStudent(studentId);
+  await requireUser();
+
+  const student = await getStudent(studentId);
   if (!student) throw new Error("That learner record no longer exists.");
 
   if (confirmLrn.trim() !== student.lrn) {
     throw new Error("The LRN you typed does not match this learner's LRN.");
   }
 
-  deleteStudent(studentId);
+  await deleteStudent(studentId);
 
   revalidatePath("/");
   redirect("/?deleted=1");
@@ -155,11 +172,13 @@ export async function saveSubjectField(
   field: "q1" | "q2" | "q3" | "q4" | "final_rating",
   value: number | null,
 ): Promise<void> {
+  const user = await requireUser();
+
   if (value != null && (!Number.isFinite(value) || value < 0 || value > 100)) {
     throw new Error(`Grade ${value} is outside 0–100.`);
   }
 
-  const { studentId } = updateSubjectField(subjectId, field, value);
+  const { studentId } = await updateSubjectField(subjectId, field, value, user.id);
   if (studentId) revalidatePath(`/students/${studentId}`);
 }
 
@@ -168,7 +187,9 @@ export async function saveLearnerInfo(
   studentId: number,
   fields: RecordEdit["student"],
 ): Promise<void> {
-  const before = getStudent(studentId);
+  const user = await requireUser();
+
+  const before = await getStudent(studentId);
   if (!before) throw new Error("That learner record no longer exists.");
 
   const next = {
@@ -185,11 +206,7 @@ export async function saveLearnerInfo(
     throw new Error("LRN, last name and first name are required.");
   }
 
-  updateStudent(studentId, next);
-
-  for (const [field, value] of Object.entries(next)) {
-    recordChange(studentId, "students", studentId, field, (before as never)[field], value);
-  }
+  await updateStudentWithHistory(studentId, next, before, user.id);
 
   revalidatePath(`/students/${studentId}`);
   revalidatePath("/");
@@ -201,21 +218,25 @@ export async function addSubject(
   name: string,
   category: string | null,
 ): Promise<number> {
+  const user = await requireUser();
+
   const trimmed = name.trim();
   if (!trimmed) throw new Error("A subject needs a name.");
 
-  const id = appendSubject(termId, trimmed, category);
+  const id = await appendSubject(termId, trimmed, category, user.id);
   revalidatePath("/");
   return id;
 }
 
 export async function removeSubject(subjectId: number): Promise<void> {
-  deleteSubject(subjectId);
+  const user = await requireUser();
+  await deleteSubject(subjectId, user.id);
   revalidatePath("/");
 }
 
 export async function markIssueResolved(issueId: number): Promise<void> {
-  resolveIssue(issueId);
+  await requireUser();
+  await resolveIssue(issueId);
   revalidatePath("/import/review");
   revalidatePath("/import");
 }
@@ -228,18 +249,22 @@ export interface ScanResult {
 
 /** Look at a folder without importing, so the registrar sees what is about to happen. */
 export async function scanFolder(folderInput: string): Promise<ScanResult> {
+  await requireUser();
+
   const folder = resolveImportFolder(folderInput);
   if (!folderExists(folder)) return { folder, exists: false, files: [] };
   return { folder, exists: true, files: listSf10Files(folder) };
 }
 
 export async function runImport(folderInput: string): Promise<ImportSummary> {
+  await requireUser();
+
   const folder = resolveImportFolder(folderInput);
   if (!folderExists(folder)) {
     throw new Error(`No folder at ${folder}`);
   }
 
-  const summary = importFolder(folder);
+  const summary = await importFolder(folder);
   revalidatePath("/");
   revalidatePath("/import");
   return summary;
@@ -262,6 +287,8 @@ export interface FolderListing {
  * over the school network.
  */
 export async function browseFolder(relative: string): Promise<FolderListing> {
+  await requireUser();
+
   const dir = safeResolve(relative);
   const rel = toRelative(dir);
 
@@ -336,11 +363,13 @@ export interface NewStudentInput {
  * a pre-filled grid invites encoding a grade against the wrong row.
  */
 export async function createRecord(input: NewStudentInput): Promise<void> {
+  await requireUser();
+
   const level = Number(input.level);
   const isJhs = level <= 10;
   const semester = isJhs ? null : Number(input.semester || "1");
 
-  const studentId = createStudent({
+  const studentId = await createStudent({
     lrn: input.lrn.trim(),
     last_name: input.lastName.trim().toUpperCase(),
     first_name: input.firstName.trim().toUpperCase(),
@@ -350,7 +379,7 @@ export async function createRecord(input: NewStudentInput): Promise<void> {
     birthdate: input.birthdate || null,
   });
 
-  createTerm(
+  await createTerm(
     studentId,
     {
       level,
@@ -360,7 +389,7 @@ export async function createRecord(input: NewStudentInput): Promise<void> {
       adviser: input.adviser.trim() || null,
       track_strand: isJhs ? null : input.trackStrand || null,
     },
-    getSchoolSettings(),
+    await getSchoolSettings(),
   );
 
   revalidatePath("/");

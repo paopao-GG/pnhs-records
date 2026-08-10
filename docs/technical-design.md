@@ -61,9 +61,10 @@ most valuable test in the repo.
 
 | Choice | Why |
 |---|---|
-| **Next.js 15** (App Router) | Server components read SQLite directly; no API layer needed for pages. |
-| **`node:sqlite`** | Node's built-in SQLite. No native module, no node-gyp, no build toolchain — which matters a great deal on Windows. Emits an experimental warning; harmless. |
-| **Plain SQL, no ORM** | Eight tables. A `schema.sql` plus prepared statements is fewer moving parts than an ORM with a codegen step. |
+| **Next.js 15** (App Router) | Server components query the database directly; no API layer needed for pages. |
+| **`@libsql/client`** | One driver, two URLs — a local `file:` database for development and every verification script, a hosted libSQL database in production. libSQL is a SQLite dialect, so `schema.sql`, `PRAGMA user_version` and every SQL string are the same in both. See §3. |
+| **Plain SQL, no ORM** | Twelve tables. A `schema.sql` plus parameterised statements is fewer moving parts than an ORM with a codegen step. |
+| **`scrypt` from `node:crypto`** | Password hashing with no new dependency. Sessions are random opaque tokens stored as a SHA-256, so there is no signing secret to leak and a database dump contains no usable sessions. |
 | **Hand-written CSS** | Fonts are Windows-native (Constantia / Corbel / Consolas) so the UI renders correctly with **no network**, which a local offline app requires. |
 | **`fflate`** | The only third-party runtime dependency. Zip read/write for the .xlsx surgery in §4. |
 
@@ -78,8 +79,9 @@ JavaScript compiler API that Next.js 15 requires; installing it fails the build 
 
 ## 3. Data model
 
-Eight tables in [`db/schema.sql`](../db/schema.sql), re-executed on every boot (all statements
-are `IF NOT EXISTS` / `INSERT OR IGNORE`, so this is idempotent and self-repairing).
+Twelve tables in [`db/schema.sql`](../db/schema.sql), applied by `npm run db:migrate` (all
+statements are `IF NOT EXISTS` / `INSERT OR IGNORE`, so this is idempotent and self-repairing).
+Development applies them automatically on first use; production does not — see below.
 
 ```
 students          identity. lrn UNIQUE — the only reliable key.
@@ -88,10 +90,55 @@ shs_eligibility   1:1 with students. JHS-completer details, admission/graduation
 enrollment_terms  one row per grade level (JHS) or per semester (SHS).
                   UNIQUE (student_id, level, semester)   -- semester NULL for JHS
 term_subjects     one row per subject per term.
+term_attendance   Form 137 only. One row per month per term; SF10 records no attendance.
 school_settings   the school's own identity, self-seeded.
 import_files      one row per file taken in, keyed by SHA-256.
 import_issues     anything a human should check. Never blocks an import.
+record_history    append-only. Every field change: what moved, from what, to what, when,
+                  and by whom.
+users             who may sign in. role is 'admin' or 'adviser'.
+sessions          live sign-ins. Stores SHA-256 of the cookie value, never the value.
+login_attempts    failed sign-ins, for lockout. Pruned on success and by age.
 ```
+
+### Gotcha: the auth guard is not middleware
+
+`requireUser()` in [`lib/auth/current-user.ts`](../lib/auth/current-user.ts) is called at the top
+of **every** page, server action and route handler. [`middleware.ts`](../middleware.ts) only
+redirects a cookie-less visitor to the sign-in page.
+
+That split is forced, not stylistic. Middleware compiles for the Edge runtime, where
+`node:crypto` does not exist — it cannot verify a session even in principle. Importing the
+cookie *name* from `current-user.ts` was enough to fail the build with *"Reading from node:url is
+not handled"*, which is why [`lib/auth/cookie.ts`](../lib/auth/cookie.ts) exists and holds
+nothing but a string. Keep that file dependency-free.
+
+A guard in front of a route can also be routed around; one inside it cannot. Next.js has shipped
+more than one middleware auth-bypass advisory.
+
+**If you add anything that reads or writes learner data, it starts with `requireUser()`.** There
+is no ambient protection to inherit.
+
+### One driver, two URLs
+
+[`lib/db/client.ts`](../lib/db/client.ts) points `@libsql/client` at a local file unless
+`TURSO_DATABASE_URL` is set. That single decision is what keeps the verification scripts
+meaningful: `npm run roundtrip` and `npm run check:ga` are the proof that a printed SF10 matches
+the source form, and they run offline against a local file **through the driver production
+uses**. A separate local driver would make them prove something about code that never ships.
+
+The cost is that every data-access function is `async`. That is not cosmetic — a query that was
+microseconds in-process is a network hop in production, so anything reading per-term in a loop
+must be batched. `getSubjectsForStudent()` and `getAttendanceForStudent()` exist for exactly
+that reason; prefer them over calling `getSubjects()` once per term.
+
+### Writes take a transaction object, not a connection
+
+`db.exec("BEGIN")` no longer works: a hosted connection is pooled, so the next statement may go
+to a different one. Multi-statement writes use `db.transaction("write")` and pass the
+transaction down — which is why `recordChange()` takes its runner as an argument. Writing
+history through the shared client while a transaction is open would land it *outside* that
+transaction, leaving a log entry for a change that got rolled back.
 
 ### Two decisions that carry weight
 
@@ -106,18 +153,22 @@ inconsistent middle names and spacing. The real files also contain `Ň` (N with 
 
 ### Gotcha: null-prototype rows
 
-`node:sqlite` returns rows with a **null prototype**. React refuses to serialise those across
-the server/client boundary and fails with *"Only plain objects can be passed to Client
-Components"*. Every row therefore leaves [`lib/db/queries.ts`](../lib/db/queries.ts) through
-`plain()` / `plainAll()`, which spread it into a real object.
+libSQL returns rows that are array-like as well as keyed by column name. React refuses to
+serialise those across the server/client boundary and fails with *"Only plain objects can be
+passed to Client Components"*. Every row therefore leaves
+[`lib/db/queries.ts`](../lib/db/queries.ts) through `plain()` / `plainAll()`, which spread it
+into a real object.
 
 **If you add a query that feeds a client component, you must do the same.**
 
-### Gotcha: schema changes need a server restart
+### Gotcha: schema changes need `npm run db:migrate`
 
-`getDb()` caches the connection on `globalThis` to survive Next.js hot reloads. The schema
-runs once per connection, so **adding a table to `schema.sql` does not take effect until the
-dev server restarts** — you get `no such table` until you do.
+Schema setup is memoised per process and skipped entirely in production, so **adding a table to
+`schema.sql` does not take effect until you run `npm run db:migrate`** (or restart the dev
+server) — you get `no such table` until you do.
+
+Adding a *column* needs a migration regardless: `CREATE TABLE IF NOT EXISTS` cannot alter a
+table that already exists, and it fails silently. See [`lib/db/migrations.ts`](../lib/db/migrations.ts).
 
 ---
 

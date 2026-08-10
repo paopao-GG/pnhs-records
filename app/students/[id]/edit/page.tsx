@@ -1,17 +1,25 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getStudent, getSubjects, getTerms } from "@/lib/db/queries.ts";
+import { getStudent, getSubjectsForStudent, getTerms } from "@/lib/db/queries.ts";
+import { requireUser } from "@/lib/auth/current-user.ts";
 import { GradeEditor } from "@/app/_components/grade-editor.tsx";
 
 export const dynamic = "force-dynamic";
 
 export default async function EditStudentPage({ params }: { params: Promise<{ id: string }> }) {
+  await requireUser();
+
   const { id } = await params;
   const studentId = Number(id);
-  const student = getStudent(studentId);
+  const student = await getStudent(studentId);
   if (!student) notFound();
 
-  const bundles = getTerms(studentId).map((term) => ({ term, subjects: getSubjects(term.id) }));
+  // One query for every subject rather than one per term - see getSubjectsForStudent().
+  const [terms, subjectsByTerm] = await Promise.all([
+    getTerms(studentId),
+    getSubjectsForStudent(studentId),
+  ]);
+  const bundles = terms.map((term) => ({ term, subjects: subjectsByTerm.get(term.id) ?? [] }));
 
   return (
     <main className="page">

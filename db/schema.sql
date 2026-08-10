@@ -155,6 +155,51 @@ CREATE TABLE IF NOT EXISTS record_history (
 
 CREATE INDEX IF NOT EXISTS idx_history_student ON record_history (student_id, changed_at);
 
+-- Who may use the system. Two roles: 'admin' manages accounts, 'adviser' does everything else.
+-- Both can search, view, print, import, add, edit and delete learner records.
+CREATE TABLE IF NOT EXISTS users (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  username            TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+  full_name           TEXT    NOT NULL,
+  -- scrypt, salted per password. See lib/auth/password.ts for the encoding.
+  password_hash       TEXT    NOT NULL,
+  role                TEXT    NOT NULL CHECK (role IN ('admin', 'adviser')),
+  -- Deactivation is reversible and keeps the account's history attributable; deleting a user
+  -- would orphan every record_history row that names them.
+  active              INTEGER NOT NULL DEFAULT 1,
+  created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+  password_changed_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Live sign-ins.
+--
+-- The cookie holds 32 random bytes; this table holds only their SHA-256. A database dump
+-- therefore does not hand over working sessions, and there is no signing secret to leak.
+CREATE TABLE IF NOT EXISTS sessions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  token_hash  TEXT    NOT NULL UNIQUE,
+  user_id     INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+  expires_at  TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (user_id);
+
+-- Failed sign-in attempts, for lockout.
+--
+-- In the database rather than in memory on purpose: on a serverless host every request may be
+-- served by a different instance, so an in-process counter counts nothing. Rows are pruned on
+-- a successful sign-in and by age.
+CREATE TABLE IF NOT EXISTS login_attempts (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  username  TEXT    NOT NULL COLLATE NOCASE,
+  ip        TEXT,
+  at        TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_attempts_username ON login_attempts (username, at);
+CREATE INDEX IF NOT EXISTS idx_attempts_ip ON login_attempts (ip, at);
+
 -- One row per SF10 file taken in. The hash is what makes re-importing a folder safe and
 -- collapses byte-identical duplicates (the school's set contains such a pair).
 CREATE TABLE IF NOT EXISTS import_files (

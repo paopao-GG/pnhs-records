@@ -131,7 +131,7 @@ all resolve.
 
 ---
 
-## 6. Accounts: admin and adviser · ~3 days
+## 6. Accounts: admin and adviser · **DONE**
 
 - `users` and `sessions` tables; passwords hashed with `scrypt` from `node:crypto` — **no new
   dependency**.
@@ -141,13 +141,27 @@ all resolve.
 - Login rate limiting and lockout, a minimum password policy, and session invalidation on
   password change or deactivation. Easy to skip, and the reason most small systems get in.
 
-**Soft delete needs a matching change in the importer.** The dedup rule treats a file as
-already-imported only if its learner still exists — and a soft-deleted learner still exists.
-Without `AND s.deleted_at IS NULL` on that query, a deleted record can no longer be restored by
-re-importing its file, which is the bug fixed earlier in this project, reintroduced. See
-production-design §4.
+**Soft delete was deliberately left out**, so delete stays permanent and the importer's dedup
+query is untouched. If it is added later, the trap is written out in production-design §4: the
+join must gain `AND s.deleted_at IS NULL`, or a deleted record can never be restored by
+re-importing its file — the bug this project already fixed once, reintroduced by another route.
 
-Needs #0. **Build before #8** — sync needs a user identity to attribute and resolve changes.
+What the build settled that the plan could not:
+
+- **Middleware cannot be the guard.** It runs on the Edge runtime with no `node:crypto`.
+  Importing the cookie name from the auth module dragged the database layer into the Edge bundle
+  and failed the build outright — which is the boundary announcing itself. Every page, action and
+  route calls `requireUser()` for itself.
+- **API routes answer 401, never a redirect.** A caller following a redirect to the sign-in page
+  gets HTTP 200 and an HTML form where it asked for a workbook, which reads as success.
+- **Rate limiting had to move into the database.** A module-level counter is per-instance memory;
+  on a host that runs more than one instance it counts a fraction of the attempts.
+- **Deactivation is checked on every request**, not at sign-in. Otherwise a deactivated adviser
+  keeps working until their cookie expires, which can be most of a school day.
+- **Advisers see every learner** — decided, not assumed. No adviser-to-section mapping exists.
+
+45 browser checks and 15 unit checks cover it, including that a forged cookie is refused and that
+an adviser posting directly to the admin route creates nothing.
 
 ---
 
@@ -278,7 +292,9 @@ Carried from the review; each one changes work that follows.
    whether #8 is 4–6 weeks or 2–3 days.
 2. **`PALIZA`'s 16 tables** — transferee, two schools, or two learners in one file? The one
    thing that could blow the Form 137 estimate.
-3. **Who is admin when the registrar is away?** Only admins restore deleted records, so a
-   single admin means a wrong deletion waits for their return.
-4. **Should advisers see every learner in the school**, or only their own section? Currently
-   assumed to be all — a policy question for the school, not a technical one.
+3. **Who is admin when the registrar is away?** Still open, and now visible in the app: the
+   Accounts page warns while only one admin exists. Only an admin can issue accounts or reset a
+   password, so a lone admin who is away is a system nobody can administer.
+4. ~~Should advisers see every learner in the school?~~ **Settled: every learner.** No
+   adviser-to-section mapping exists, sections change yearly, and a small school covers for
+   itself. Access is attributable through `record_history`.

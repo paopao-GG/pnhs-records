@@ -1,22 +1,43 @@
 /**
- * Typed data access. Plain SQL against node:sqlite - six tables does not justify an ORM,
- * and this keeps the demo free of a codegen step.
+ * Typed data access. Plain SQL against libSQL - six tables does not justify an ORM, and this
+ * keeps the project free of a codegen step.
+ *
+ * Everything here is async. The driver talks to a local file in development and over HTTP in
+ * production, and the second one is the reason to care about round trips: a query that was
+ * microseconds in-process is now a network hop. Where a caller needs every subject or every
+ * attendance row for a learner, use the `...ForStudent` helpers rather than looping per term.
  */
 
 import { getDb } from "./index.ts";
+import type { Client, Row, Transaction } from "@libsql/client";
 import type { ShsCategory } from "../sf10/shs-map.ts";
 
+/** Either the shared connection or an open transaction. Writes take one explicitly. */
+export type Runner = Pick<Client | Transaction, "execute">;
+
 /**
- * node:sqlite returns rows with a null prototype. React refuses to serialise those across
- * the server/client boundary ("Only plain objects ... can be passed to Client Components"),
- * so every row leaves this module as a plain object.
+ * Rows arrive as libSQL `Row` objects, which are array-like as well as keyed by column name.
+ * React refuses to serialise those across the server/client boundary ("Only plain objects ...
+ * can be passed to Client Components"), so every row leaves this module as a plain object.
  */
-function plain<T>(row: unknown): T {
-  return { ...(row as object) } as T;
+function plain<T>(row: Row): T {
+  return { ...(row as unknown as object) } as T;
 }
 
-function plainAll<T>(rows: unknown[]): T[] {
+function plainAll<T>(rows: Row[]): T[] {
   return rows.map((r) => plain<T>(r));
+}
+
+/** Group rows by a numeric key, preserving the order they came back in. */
+function groupBy<T>(rows: T[], key: (row: T) => number): Map<number, T[]> {
+  const out = new Map<number, T[]>();
+  for (const row of rows) {
+    const k = key(row);
+    const bucket = out.get(k);
+    if (bucket) bucket.push(row);
+    else out.set(k, [row]);
+  }
+  return out;
 }
 
 export interface StudentRow {
@@ -87,34 +108,34 @@ export interface StudentSummary {
   levels: string;
 }
 
-export function listStudents(): StudentSummary[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT s.id, s.lrn, s.last_name, s.first_name, s.middle_name, s.name_ext,
-              COALESCE(GROUP_CONCAT(DISTINCT t.level), '') AS levels
-         FROM students s
-         LEFT JOIN enrollment_terms t ON t.student_id = s.id
-        GROUP BY s.id
-        ORDER BY s.last_name, s.first_name`,
-    )
-    .all();
-  return plainAll<StudentSummary>(rows);
+export async function listStudents(): Promise<StudentSummary[]> {
+  const db = await getDb();
+  const result = await db.execute(
+    `SELECT s.id, s.lrn, s.last_name, s.first_name, s.middle_name, s.name_ext,
+            COALESCE(GROUP_CONCAT(DISTINCT t.level), '') AS levels
+       FROM students s
+       LEFT JOIN enrollment_terms t ON t.student_id = s.id
+      GROUP BY s.id
+      ORDER BY s.last_name, s.first_name`,
+  );
+  return plainAll<StudentSummary>(result.rows);
 }
 
-export function getStudent(id: number): StudentRow | null {
-  const row = getDb().prepare(`SELECT * FROM students WHERE id = ?`).get(id);
-  return row ? plain<StudentRow>(row) : null;
+export async function getStudent(id: number): Promise<StudentRow | null> {
+  const db = await getDb();
+  const result = await db.execute({ sql: `SELECT * FROM students WHERE id = ?`, args: [id] });
+  return result.rows[0] ? plain<StudentRow>(result.rows[0]) : null;
 }
 
-export function getTerms(studentId: number): TermRow[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT * FROM enrollment_terms
-        WHERE student_id = ?
-        ORDER BY level, COALESCE(semester, 0)`,
-    )
-    .all(studentId);
-  return plainAll<TermRow>(rows);
+export async function getTerms(studentId: number): Promise<TermRow[]> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT * FROM enrollment_terms
+           WHERE student_id = ?
+           ORDER BY level, COALESCE(semester, 0)`,
+    args: [studentId],
+  });
+  return plainAll<TermRow>(result.rows);
 }
 
 export interface AttendanceRow {
@@ -124,53 +145,105 @@ export interface AttendanceRow {
 }
 
 /** Form 137 only; SF10 records no attendance. */
-export function getAttendance(termId: number): AttendanceRow[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT month, days_of_school, days_present
-         FROM term_attendance WHERE term_id = ? ORDER BY ordinal`,
-    )
-    .all(termId);
-  return plainAll<AttendanceRow>(rows);
+export async function getAttendance(termId: number): Promise<AttendanceRow[]> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT month, days_of_school, days_present
+            FROM term_attendance WHERE term_id = ? ORDER BY ordinal`,
+    args: [termId],
+  });
+  return plainAll<AttendanceRow>(result.rows);
 }
 
-/** The stored copy of the file a learner's record was imported from, if there is one. */
-export function getOriginalFile(
+export async function getSubjects(termId: number): Promise<SubjectRow[]> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT * FROM term_subjects WHERE term_id = ? ORDER BY ordinal`,
+    args: [termId],
+  });
+  return plainAll<SubjectRow>(result.rows);
+}
+
+/**
+ * Every subject for every one of a learner's terms, keyed by term id.
+ *
+ * The per-term `getSubjects()` above is fine for a single term, but a record page renders four
+ * to eight of them. In-process SQLite made that loop free; over the network it is one round trip
+ * per term on the critical path of the page. One query, grouped here, is the same data.
+ */
+export async function getSubjectsForStudent(studentId: number): Promise<Map<number, SubjectRow[]>> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT s.* FROM term_subjects s
+            JOIN enrollment_terms t ON t.id = s.term_id
+           WHERE t.student_id = ?
+           ORDER BY s.term_id, s.ordinal`,
+    args: [studentId],
+  });
+  return groupBy(plainAll<SubjectRow>(result.rows), (r) => r.term_id);
+}
+
+/** Attendance for every one of a learner's terms, keyed by term id. See above for why. */
+export async function getAttendanceForStudent(
   studentId: number,
-): { filename: string; stored_path: string } | null {
-  const row = getDb()
-    .prepare(
-      `SELECT filename, stored_path
-         FROM import_files
-        WHERE student_id = ? AND stored_path IS NOT NULL
-        ORDER BY id DESC LIMIT 1`,
-    )
-    .get(studentId);
-  return row ? plain<{ filename: string; stored_path: string }>(row) : null;
-}
+): Promise<Map<number, AttendanceRow[]>> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT a.term_id, a.month, a.days_of_school, a.days_present
+            FROM term_attendance a
+            JOIN enrollment_terms t ON t.id = a.term_id
+           WHERE t.student_id = ?
+           ORDER BY a.term_id, a.ordinal`,
+    args: [studentId],
+  });
+  const rows = plainAll<AttendanceRow & { term_id: number }>(result.rows);
+  const grouped = groupBy(rows, (r) => r.term_id);
 
-export function getSubjects(termId: number): SubjectRow[] {
-  const rows = getDb()
-    .prepare(`SELECT * FROM term_subjects WHERE term_id = ? ORDER BY ordinal`)
-    .all(termId);
-  return plainAll<SubjectRow>(rows);
-}
-
-export function getEligibility(studentId: number, form: "jhs" | "shs") {
-  const table = form === "jhs" ? "jhs_eligibility" : "shs_eligibility";
-  return (
-    (getDb().prepare(`SELECT * FROM ${table} WHERE student_id = ?`).get(studentId) as
-      | Record<string, unknown>
-      | undefined) ?? null
+  // Drop the grouping key so callers get the same shape getAttendance() returns.
+  return new Map(
+    [...grouped].map(([termId, list]) => [
+      termId,
+      list.map(({ month, days_of_school, days_present }) => ({
+        month,
+        days_of_school,
+        days_present,
+      })),
+    ]),
   );
 }
 
-export function getSchoolSettings(): Record<string, string> {
-  const rows = getDb().prepare(`SELECT key, value FROM school_settings`).all() as unknown as {
-    key: string;
-    value: string;
-  }[];
-  return Object.fromEntries(rows.map((r) => [r.key, r.value]));
+/** The stored copy of the file a learner's record was imported from, if there is one. */
+export async function getOriginalFile(
+  studentId: number,
+): Promise<{ filename: string; stored_path: string } | null> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT filename, stored_path
+            FROM import_files
+           WHERE student_id = ? AND stored_path IS NOT NULL
+           ORDER BY id DESC LIMIT 1`,
+    args: [studentId],
+  });
+  return result.rows[0] ? plain<{ filename: string; stored_path: string }>(result.rows[0]) : null;
+}
+
+export async function getEligibility(
+  studentId: number,
+  form: "jhs" | "shs",
+): Promise<Record<string, unknown> | null> {
+  const table = form === "jhs" ? "jhs_eligibility" : "shs_eligibility";
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT * FROM ${table} WHERE student_id = ?`,
+    args: [studentId],
+  });
+  return result.rows[0] ? plain<Record<string, unknown>>(result.rows[0]) : null;
+}
+
+export async function getSchoolSettings(): Promise<Record<string, string>> {
+  const db = await getDb();
+  const result = await db.execute(`SELECT key, value FROM school_settings`);
+  return Object.fromEntries(result.rows.map((r) => [String(r.key), String(r.value)]));
 }
 
 /**
@@ -180,6 +253,8 @@ export function getSchoolSettings(): Record<string, string> {
  * curriculum.** Form 137 records reuse levels 7-10 for First-Fourth Year, so without the
  * `curriculum` check a 1995 record would be offered a 2017 DepEd form, asserting a curriculum
  * the learner never studied. Those learners get the original document instead.
+ *
+ * Takes rows rather than an id, so it stays synchronous and testable.
  */
 export function availableForms(terms: TermRow[]): ("jhs" | "shs")[] {
   const modern = terms.filter((t) => (t.curriculum ?? "k12") !== "old");
@@ -195,37 +270,40 @@ export function hasOldCurriculum(terms: TermRow[]): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Mutations
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // Change history
 // ---------------------------------------------------------------------------
 
 /**
- * Record one field change. Call inside the caller's transaction, never on its own.
+ * Record one field change.
  *
- * Unchanged values are skipped, so autosave firing on a field the user only tabbed through
- * does not fill the log with noise.
+ * The runner is passed in rather than taken from the module, so this can join the caller's
+ * transaction. A libSQL transaction is an object, not connection state — writing through the
+ * shared client while a transaction is open would land outside it, and the history would
+ * survive a change that got rolled back.
+ *
+ * Unchanged values are skipped, so autosave firing on a field the user only tabbed through does
+ * not fill the log with noise.
  */
-export function recordChange(
+export async function recordChange(
+  db: Runner,
+  userId: number | null,
   studentId: number | null,
   table: string,
   rowId: number,
   field: string,
   oldValue: unknown,
   newValue: unknown,
-): void {
+): Promise<void> {
   const before = oldValue == null ? null : String(oldValue);
   const after = newValue == null ? null : String(newValue);
   if (before === after) return;
 
-  getDb()
-    .prepare(
-      `INSERT INTO record_history (student_id, table_name, row_id, field, old_value, new_value)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    )
-    .run(studentId, table, rowId, field, before, after);
+  await db.execute({
+    sql: `INSERT INTO record_history
+            (student_id, table_name, row_id, field, old_value, new_value, user_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    args: [studentId, table, rowId, field, before, after, userId],
+  });
 }
 
 export interface HistoryRow {
@@ -238,18 +316,22 @@ export interface HistoryRow {
   row_id: number;
 }
 
-export function getHistoryForStudent(studentId: number, limit = 50): HistoryRow[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT id, field, old_value, new_value, changed_at, table_name, row_id
-         FROM record_history
-        WHERE student_id = ?
-        ORDER BY id DESC
-        LIMIT ?`,
-    )
-    .all(studentId, limit);
-  return plainAll<HistoryRow>(rows);
+export async function getHistoryForStudent(studentId: number, limit = 50): Promise<HistoryRow[]> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT id, field, old_value, new_value, changed_at, table_name, row_id
+            FROM record_history
+           WHERE student_id = ?
+           ORDER BY id DESC
+           LIMIT ?`,
+    args: [studentId, limit],
+  });
+  return plainAll<HistoryRow>(result.rows);
 }
+
+// ---------------------------------------------------------------------------
+// Mutations
+// ---------------------------------------------------------------------------
 
 /**
  * Update one quarter (or the stored final) on a subject, logging the change.
@@ -257,76 +339,123 @@ export function getHistoryForStudent(studentId: number, limit = 50): HistoryRow[
  * Autosave calls this per field rather than saving the whole record, so two people editing
  * different subjects do not overwrite each other, and the history shows exactly what moved.
  */
-export function updateSubjectField(
+export async function updateSubjectField(
   subjectId: number,
   field: "q1" | "q2" | "q3" | "q4" | "final_rating",
   value: number | null,
-): { studentId: number | null; termId: number | null } {
-  const db = getDb();
+  userId: number | null,
+): Promise<{ studentId: number | null; termId: number | null }> {
+  const db = await getDb();
 
-  const before = db
-    .prepare(
-      `SELECT s.${field} AS current, s.term_id, t.student_id
-         FROM term_subjects s
-         JOIN enrollment_terms t ON t.id = s.term_id
-        WHERE s.id = ?`,
-    )
-    .get(subjectId) as { current: number | null; term_id: number; student_id: number } | undefined;
+  const found = await db.execute({
+    sql: `SELECT s.${field} AS current, s.term_id, t.student_id
+            FROM term_subjects s
+            JOIN enrollment_terms t ON t.id = s.term_id
+           WHERE s.id = ?`,
+    args: [subjectId],
+  });
 
+  const before = found.rows[0]
+    ? plain<{ current: number | null; term_id: number; student_id: number }>(found.rows[0])
+    : undefined;
   if (!before) throw new Error(`subject ${subjectId} not found`);
 
-  db.exec("BEGIN");
+  const tx = await db.transaction("write");
   try {
-    db.prepare(`UPDATE term_subjects SET ${field} = ? WHERE id = ?`).run(value, subjectId);
-    recordChange(before.student_id, "term_subjects", subjectId, field, before.current, value);
+    await tx.execute({
+      sql: `UPDATE term_subjects SET ${field} = ? WHERE id = ?`,
+      args: [value, subjectId],
+    });
+    await recordChange(
+      tx, userId, before.student_id, "term_subjects", subjectId, field, before.current, value,
+    );
 
     // Editing a quarter invalidates a general average that came from an imported form: the
     // stored figure described the old grades. Clearing it makes the app compute from what is
     // now on screen rather than keep showing a stale number from the paper record.
     if (field !== "final_rating") {
-      db.prepare(
-        `UPDATE enrollment_terms SET general_average = NULL WHERE id = ? AND general_average IS NOT NULL`,
-      ).run(before.term_id);
+      await tx.execute({
+        sql: `UPDATE enrollment_terms SET general_average = NULL
+               WHERE id = ? AND general_average IS NOT NULL`,
+        args: [before.term_id],
+      });
     }
 
-    db.exec("COMMIT");
+    await tx.commit();
   } catch (err) {
-    db.exec("ROLLBACK");
+    await tx.rollback().catch(() => {});
     throw err;
   }
 
   return { studentId: before.student_id, termId: before.term_id };
 }
 
-export function updateSubjectGrades(
+const UPDATE_SUBJECT_GRADES = `UPDATE term_subjects
+     SET q1 = ?, q2 = ?, q3 = ?, q4 = ?, final_rating = ?, remarks = ?
+   WHERE id = ?`;
+
+export interface SubjectGradeUpdate {
+  subjectId: number;
+  grades: { q1: number | null; q2: number | null; q3: number | null; q4: number | null };
+  finalRating: number | null;
+  remarks: string | null;
+}
+
+export async function updateSubjectGrades(
   subjectId: number,
   grades: { q1: number | null; q2: number | null; q3: number | null; q4: number | null },
   finalRating: number | null,
   remarks: string | null,
-): void {
-  getDb()
-    .prepare(
-      `UPDATE term_subjects
-          SET q1 = ?, q2 = ?, q3 = ?, q4 = ?, final_rating = ?, remarks = ?
-        WHERE id = ?`,
-    )
-    .run(grades.q1, grades.q2, grades.q3, grades.q4, finalRating, remarks, subjectId);
+): Promise<void> {
+  await updateSubjectGradesMany([{ subjectId, grades, finalRating, remarks }]);
 }
 
-export function updateTerm(
+/**
+ * Save several subjects' grades at once.
+ *
+ * Saving a whole record touches every subject in a term - up to forty rows. One statement each
+ * would be forty round trips against the hosted database, and a failure halfway would leave the
+ * term half-saved. A batch is one trip and all-or-nothing.
+ */
+export async function updateSubjectGradesMany(updates: SubjectGradeUpdate[]): Promise<void> {
+  if (updates.length === 0) return;
+  const db = await getDb();
+  await db.batch(
+    updates.map((u) => ({
+      sql: UPDATE_SUBJECT_GRADES,
+      args: [
+        u.grades.q1,
+        u.grades.q2,
+        u.grades.q3,
+        u.grades.q4,
+        u.finalRating,
+        u.remarks,
+        u.subjectId,
+      ],
+    })),
+    "write",
+  );
+}
+
+export async function updateTerm(
   termId: number,
-  fields: { section: string | null; adviser: string | null; school_year: string | null; promotion_remark: string | null },
-): void {
-  getDb()
-    .prepare(
-      `UPDATE enrollment_terms
-          SET section = ?, adviser = ?, school_year = ?, promotion_remark = ?
-        WHERE id = ?`,
-    )
-    .run(fields.section, fields.adviser, fields.school_year, fields.promotion_remark, termId);
+  fields: {
+    section: string | null;
+    adviser: string | null;
+    school_year: string | null;
+    promotion_remark: string | null;
+  },
+): Promise<void> {
+  const db = await getDb();
+  await db.execute({
+    sql: `UPDATE enrollment_terms
+             SET section = ?, adviser = ?, school_year = ?, promotion_remark = ?
+           WHERE id = ?`,
+    args: [fields.section, fields.adviser, fields.school_year, fields.promotion_remark, termId],
+  });
 }
 
-export function updateStudent(
+export async function updateStudent(
   id: number,
   fields: {
     lrn: string;
@@ -337,15 +466,14 @@ export function updateStudent(
     sex: string | null;
     birthdate: string | null;
   },
-): void {
-  getDb()
-    .prepare(
-      `UPDATE students
-          SET lrn = ?, last_name = ?, first_name = ?, middle_name = ?, name_ext = ?,
-              sex = ?, birthdate = ?, updated_at = datetime('now')
-        WHERE id = ?`,
-    )
-    .run(
+): Promise<void> {
+  const db = await getDb();
+  await db.execute({
+    sql: `UPDATE students
+             SET lrn = ?, last_name = ?, first_name = ?, middle_name = ?, name_ext = ?,
+                 sex = ?, birthdate = ?, updated_at = datetime('now')
+           WHERE id = ?`,
+    args: [
       fields.lrn,
       fields.last_name,
       fields.first_name,
@@ -354,10 +482,56 @@ export function updateStudent(
       fields.sex,
       fields.birthdate,
       id,
-    );
+    ],
+  });
 }
 
-export function createStudent(fields: {
+export type StudentFields = Parameters<typeof updateStudent>[1];
+
+/**
+ * Update the learner-identity fields and log every one that moved, atomically.
+ *
+ * The two halves belong in one transaction. A history row describing a change that got rolled
+ * back is worse than no history at all - it is a record of something that never happened.
+ */
+export async function updateStudentWithHistory(
+  id: number,
+  next: StudentFields,
+  before: StudentRow,
+  userId: number | null,
+): Promise<void> {
+  const db = await getDb();
+  const tx = await db.transaction("write");
+  try {
+    await tx.execute({
+      sql: `UPDATE students
+               SET lrn = ?, last_name = ?, first_name = ?, middle_name = ?, name_ext = ?,
+                   sex = ?, birthdate = ?, updated_at = datetime('now')
+             WHERE id = ?`,
+      args: [
+        next.lrn,
+        next.last_name,
+        next.first_name,
+        next.middle_name,
+        next.name_ext,
+        next.sex,
+        next.birthdate,
+        id,
+      ],
+    });
+
+    for (const [field, value] of Object.entries(next)) {
+      await recordChange(tx, userId, id, "students", id, field, (before as never)[field], value);
+    }
+
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback().catch(() => {});
+    throw err;
+  }
+}
+
+export async function createStudent(fields: {
   lrn: string;
   last_name: string;
   first_name: string;
@@ -365,25 +539,28 @@ export function createStudent(fields: {
   name_ext: string | null;
   sex: string | null;
   birthdate: string | null;
-}): number {
-  const db = getDb();
-  db.prepare(
-    `INSERT INTO students (lrn, last_name, first_name, middle_name, name_ext, sex, birthdate)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    fields.lrn,
-    fields.last_name,
-    fields.first_name,
-    fields.middle_name,
-    fields.name_ext,
-    fields.sex,
-    fields.birthdate,
-  );
-  const row = db.prepare(`SELECT last_insert_rowid() AS id`).get() as unknown as { id: number };
-  return row.id;
+}): Promise<number> {
+  const db = await getDb();
+  // RETURNING rather than last_insert_rowid(): that function reports the last write on the
+  // connection, which is not a safe assumption once connections are pooled and shared.
+  const result = await db.execute({
+    sql: `INSERT INTO students (lrn, last_name, first_name, middle_name, name_ext, sex, birthdate)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          RETURNING id`,
+    args: [
+      fields.lrn,
+      fields.last_name,
+      fields.first_name,
+      fields.middle_name,
+      fields.name_ext,
+      fields.sex,
+      fields.birthdate,
+    ],
+  });
+  return Number(result.rows[0].id);
 }
 
-export function createTerm(
+export async function createTerm(
   studentId: number,
   term: {
     level: number;
@@ -394,29 +571,30 @@ export function createTerm(
     track_strand: string | null;
   },
   school: Record<string, string>,
-): number {
-  const db = getDb();
-  db.prepare(
-    `INSERT INTO enrollment_terms
-       (student_id, level, semester, school_year, section, adviser, track_strand,
-        school_name, school_id, district, division, region)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    studentId,
-    term.level,
-    term.semester,
-    term.school_year,
-    term.section,
-    term.adviser,
-    term.track_strand,
-    school.school_name ?? null,
-    school.school_id ?? null,
-    school.district ?? null,
-    school.division ?? null,
-    school.region ?? null,
-  );
-  const row = db.prepare(`SELECT last_insert_rowid() AS id`).get() as unknown as { id: number };
-  return row.id;
+): Promise<number> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `INSERT INTO enrollment_terms
+            (student_id, level, semester, school_year, section, adviser, track_strand,
+             school_name, school_id, district, division, region)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          RETURNING id`,
+    args: [
+      studentId,
+      term.level,
+      term.semester,
+      term.school_year,
+      term.section,
+      term.adviser,
+      term.track_strand,
+      school.school_name ?? null,
+      school.school_id ?? null,
+      school.district ?? null,
+      school.division ?? null,
+      school.region ?? null,
+    ],
+  });
+  return Number(result.rows[0].id);
 }
 
 // ---------------------------------------------------------------------------
@@ -434,18 +612,18 @@ export interface ImportHistoryRow {
   first_name: string | null;
 }
 
-export function getImportHistory(limit = 20): ImportHistoryRow[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT f.id, f.filename, f.status, f.notes, f.imported_at, f.student_id,
-              s.last_name, s.first_name
-         FROM import_files f
-         LEFT JOIN students s ON s.id = f.student_id
-        ORDER BY f.id DESC
-        LIMIT ?`,
-    )
-    .all(limit);
-  return plainAll<ImportHistoryRow>(rows);
+export async function getImportHistory(limit = 20): Promise<ImportHistoryRow[]> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT f.id, f.filename, f.status, f.notes, f.imported_at, f.student_id,
+                 s.last_name, s.first_name
+            FROM import_files f
+            LEFT JOIN students s ON s.id = f.student_id
+           ORDER BY f.id DESC
+           LIMIT ?`,
+    args: [limit],
+  });
+  return plainAll<ImportHistoryRow>(result.rows);
 }
 
 export interface IssueRow {
@@ -462,38 +640,39 @@ export interface IssueRow {
   lrn: string | null;
 }
 
-export function getOpenIssues(): IssueRow[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT i.id, i.student_id, i.severity, i.field, i.cell, i.raw_value, i.message,
-              f.filename, s.last_name, s.first_name, s.lrn
-         FROM import_issues i
-         JOIN import_files f ON f.id = i.import_file_id
-         LEFT JOIN students s ON s.id = i.student_id
-        WHERE i.resolved = 0
-        ORDER BY CASE i.severity WHEN 'error' THEN 0 ELSE 1 END, s.last_name, i.id`,
-    )
-    .all();
-  return plainAll<IssueRow>(rows);
+export async function getOpenIssues(): Promise<IssueRow[]> {
+  const db = await getDb();
+  const result = await db.execute(
+    `SELECT i.id, i.student_id, i.severity, i.field, i.cell, i.raw_value, i.message,
+            f.filename, s.last_name, s.first_name, s.lrn
+       FROM import_issues i
+       JOIN import_files f ON f.id = i.import_file_id
+       LEFT JOIN students s ON s.id = i.student_id
+      WHERE i.resolved = 0
+      ORDER BY CASE i.severity WHEN 'error' THEN 0 ELSE 1 END, s.last_name, i.id`,
+  );
+  return plainAll<IssueRow>(result.rows);
 }
 
-export function countOpenIssues(): number {
-  const row = getDb()
-    .prepare(`SELECT COUNT(*) AS n FROM import_issues WHERE resolved = 0`)
-    .get() as { n: number };
-  return row.n;
+export async function countOpenIssues(): Promise<number> {
+  const db = await getDb();
+  const result = await db.execute(`SELECT COUNT(*) AS n FROM import_issues WHERE resolved = 0`);
+  return Number(result.rows[0].n);
 }
 
 /** Open issues for one learner, so their record page can show a review flag. */
-export function countIssuesForStudent(studentId: number): number {
-  const row = getDb()
-    .prepare(`SELECT COUNT(*) AS n FROM import_issues WHERE student_id = ? AND resolved = 0`)
-    .get(studentId) as { n: number };
-  return row.n;
+export async function countIssuesForStudent(studentId: number): Promise<number> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT COUNT(*) AS n FROM import_issues WHERE student_id = ? AND resolved = 0`,
+    args: [studentId],
+  });
+  return Number(result.rows[0].n);
 }
 
-export function resolveIssue(issueId: number): void {
-  getDb().prepare(`UPDATE import_issues SET resolved = 1 WHERE id = ?`).run(issueId);
+export async function resolveIssue(issueId: number): Promise<void> {
+  const db = await getDb();
+  await db.execute({ sql: `UPDATE import_issues SET resolved = 1 WHERE id = ?`, args: [issueId] });
 }
 
 /** What a delete would destroy. Shown on the confirmation step so the choice is informed. */
@@ -502,15 +681,15 @@ export interface DeletionSummary {
   subjects: number;
 }
 
-export function getDeletionSummary(studentId: number): DeletionSummary {
-  const row = getDb()
-    .prepare(
-      `SELECT (SELECT COUNT(*) FROM enrollment_terms WHERE student_id = ?)  AS terms,
-              (SELECT COUNT(*) FROM term_subjects
-                 WHERE term_id IN (SELECT id FROM enrollment_terms WHERE student_id = ?)) AS subjects`,
-    )
-    .get(studentId, studentId);
-  return plain<DeletionSummary>(row);
+export async function getDeletionSummary(studentId: number): Promise<DeletionSummary> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT (SELECT COUNT(*) FROM enrollment_terms WHERE student_id = ?)  AS terms,
+                 (SELECT COUNT(*) FROM term_subjects
+                    WHERE term_id IN (SELECT id FROM enrollment_terms WHERE student_id = ?)) AS subjects`,
+    args: [studentId, studentId],
+  });
+  return plain<DeletionSummary>(result.rows[0]);
 }
 
 /**
@@ -521,33 +700,43 @@ export function getDeletionSummary(studentId: number): DeletionSummary {
  * silently and orphan rows if that pragma were ever missed. This is a permanent academic
  * record - it should not depend on connection state being right.
  */
-export function deleteStudent(studentId: number): void {
-  const db = getDb();
-  db.exec("BEGIN");
+export async function deleteStudent(studentId: number): Promise<void> {
+  const db = await getDb();
+  const tx = await db.transaction("write");
   try {
-    db.prepare(
-      `DELETE FROM term_subjects
-        WHERE term_id IN (SELECT id FROM enrollment_terms WHERE student_id = ?)`,
-    ).run(studentId);
-    db.prepare(`DELETE FROM enrollment_terms WHERE student_id = ?`).run(studentId);
-    db.prepare(`DELETE FROM jhs_eligibility WHERE student_id = ?`).run(studentId);
-    db.prepare(`DELETE FROM shs_eligibility WHERE student_id = ?`).run(studentId);
+    await tx.execute({
+      sql: `DELETE FROM term_subjects
+             WHERE term_id IN (SELECT id FROM enrollment_terms WHERE student_id = ?)`,
+      args: [studentId],
+    });
+    await tx.execute({
+      sql: `DELETE FROM term_attendance
+             WHERE term_id IN (SELECT id FROM enrollment_terms WHERE student_id = ?)`,
+      args: [studentId],
+    });
+    await tx.execute({
+      sql: `DELETE FROM enrollment_terms WHERE student_id = ?`,
+      args: [studentId],
+    });
+    await tx.execute({ sql: `DELETE FROM jhs_eligibility WHERE student_id = ?`, args: [studentId] });
+    await tx.execute({ sql: `DELETE FROM shs_eligibility WHERE student_id = ?`, args: [studentId] });
 
     // Review flags die with the learner; leaving them would list issues against a record
     // that no longer exists.
-    db.prepare(`DELETE FROM import_issues WHERE student_id = ?`).run(studentId);
+    await tx.execute({ sql: `DELETE FROM import_issues WHERE student_id = ?`, args: [studentId] });
 
     // The import history row is KEPT - it is the record of when that file came in - but it
     // must stop claiming to own a learner. `importBytes` treats a row with no live student as
     // not-yet-imported, which is what lets the file be imported again to restore the record.
-    db.prepare(
-      `UPDATE import_files SET student_id = NULL, status = 'deleted' WHERE student_id = ?`,
-    ).run(studentId);
+    await tx.execute({
+      sql: `UPDATE import_files SET student_id = NULL, status = 'deleted' WHERE student_id = ?`,
+      args: [studentId],
+    });
 
-    db.prepare(`DELETE FROM students WHERE id = ?`).run(studentId);
-    db.exec("COMMIT");
+    await tx.execute({ sql: `DELETE FROM students WHERE id = ?`, args: [studentId] });
+    await tx.commit();
   } catch (err) {
-    db.exec("ROLLBACK");
+    await tx.rollback().catch(() => {});
     throw err;
   }
 }
@@ -558,43 +747,65 @@ export function deleteStudent(studentId: number): void {
  * `term_subjects` is UNIQUE(term_id, ordinal), so the ordinal comes from MAX+1 rather than a
  * row count — deleting a middle subject leaves a gap, and counting would collide with it.
  */
-export function appendSubject(termId: number, name: string, category: string | null): number {
-  const db = getDb();
-  const row = db
-    .prepare(`SELECT COALESCE(MAX(ordinal), -1) + 1 AS next FROM term_subjects WHERE term_id = ?`)
-    .get(termId) as { next: number };
+export async function appendSubject(
+  termId: number,
+  name: string,
+  category: string | null,
+  userId: number | null,
+): Promise<number> {
+  const db = await getDb();
+  const tx = await db.transaction("write");
+  try {
+    const next = await tx.execute({
+      sql: `SELECT COALESCE(MAX(ordinal), -1) + 1 AS next FROM term_subjects WHERE term_id = ?`,
+      args: [termId],
+    });
 
-  db.prepare(
-    `INSERT INTO term_subjects (term_id, ordinal, subject_name, category)
-     VALUES (?, ?, ?, ?)`,
-  ).run(termId, row.next, name, category);
+    const created = await tx.execute({
+      sql: `INSERT INTO term_subjects (term_id, ordinal, subject_name, category)
+            VALUES (?, ?, ?, ?)
+            RETURNING id`,
+      args: [termId, Number(next.rows[0].next), name, category],
+    });
+    const subjectId = Number(created.rows[0].id);
 
-  const created = db.prepare(`SELECT last_insert_rowid() AS id`).get() as { id: number };
+    const owner = await tx.execute({
+      sql: `SELECT student_id FROM enrollment_terms WHERE id = ?`,
+      args: [termId],
+    });
+    const studentId = owner.rows[0] ? Number(owner.rows[0].student_id) : null;
 
-  const owner = db
-    .prepare(`SELECT student_id FROM enrollment_terms WHERE id = ?`)
-    .get(termId) as { student_id: number } | undefined;
-  recordChange(owner?.student_id ?? null, "term_subjects", created.id, "subject_name", null, name);
-
-  return created.id;
+    await recordChange(
+      tx, userId, studentId, "term_subjects", subjectId, "subject_name", null, name,
+    );
+    await tx.commit();
+    return subjectId;
+  } catch (err) {
+    await tx.rollback().catch(() => {});
+    throw err;
+  }
 }
 
-export function deleteSubject(subjectId: number): void {
-  const db = getDb();
-  const before = db
-    .prepare(
-      `SELECT s.subject_name, t.student_id
-         FROM term_subjects s
-         JOIN enrollment_terms t ON t.id = s.term_id
-        WHERE s.id = ?`,
-    )
-    .get(subjectId) as { subject_name: string; student_id: number } | undefined;
+export async function deleteSubject(subjectId: number, userId: number | null): Promise<void> {
+  const db = await getDb();
+  const found = await db.execute({
+    sql: `SELECT s.subject_name, t.student_id
+            FROM term_subjects s
+            JOIN enrollment_terms t ON t.id = s.term_id
+           WHERE s.id = ?`,
+    args: [subjectId],
+  });
+  const before = found.rows[0]
+    ? plain<{ subject_name: string; student_id: number }>(found.rows[0])
+    : undefined;
   if (!before) return;
 
-  db.exec("BEGIN");
+  const tx = await db.transaction("write");
   try {
-    db.prepare(`DELETE FROM term_subjects WHERE id = ?`).run(subjectId);
-    recordChange(
+    await tx.execute({ sql: `DELETE FROM term_subjects WHERE id = ?`, args: [subjectId] });
+    await recordChange(
+      tx,
+      userId,
       before.student_id,
       "term_subjects",
       subjectId,
@@ -602,20 +813,27 @@ export function deleteSubject(subjectId: number): void {
       before.subject_name,
       null,
     );
-    db.exec("COMMIT");
+    await tx.commit();
   } catch (err) {
-    db.exec("ROLLBACK");
+    await tx.rollback().catch(() => {});
     throw err;
   }
 }
 
-export function createSubjects(
+export async function createSubjects(
   termId: number,
   subjects: { name: string; category?: string | null }[],
-): void {
-  const stmt = getDb().prepare(
-    `INSERT INTO term_subjects (term_id, ordinal, subject_name, category)
-     VALUES (?, ?, ?, ?)`,
+): Promise<void> {
+  if (subjects.length === 0) return;
+  const db = await getDb();
+  // One batch rather than a loop of executes: a new SHS term seeds a dozen subjects, and each
+  // one would otherwise be its own round trip.
+  await db.batch(
+    subjects.map((s, i) => ({
+      sql: `INSERT INTO term_subjects (term_id, ordinal, subject_name, category)
+            VALUES (?, ?, ?, ?)`,
+      args: [termId, i, s.name, s.category ?? null],
+    })),
+    "write",
   );
-  subjects.forEach((s, i) => stmt.run(termId, i, s.name, s.category ?? null));
 }

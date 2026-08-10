@@ -24,16 +24,11 @@ const EMBEDDED_VARIANT = "F-137 QUINDAY, JUDITH A.. 1995-1996.docx";
 const DUPLICATED = "F-137- PALIZA, JHON JACOB.docx";
 
 let passed = 0;
-const check = (name: string, fn: () => void) => {
-  try {
-    fn();
-    passed++;
-  } catch (err) {
-    console.log(`  FAIL  ${name}`);
-    console.log(`        ${err instanceof Error ? err.message : err}`);
-    process.exitCode = 1;
-  }
-};
+// Collected then run at the end, because some checks query the database and are therefore
+// async. Running them as they are declared would let a later check observe an earlier one's
+// half-finished writes.
+const checks: { name: string; fn: () => void | Promise<void> }[] = [];
+const check = (name: string, fn: () => void | Promise<void>) => checks.push({ name, fn });
 
 const parse = (file: string) => parseF137Bytes(readFileSync(join(DIR, file)));
 
@@ -133,20 +128,20 @@ check("the placeholder LRN is stable and obviously not an LRN", () => {
   assert.ok(!/^\d{12}$/.test(a), "must not look like a 12-digit LRN");
 });
 
-check("buildSf10Record drops old-curriculum terms", () => {
+check("buildSf10Record drops old-curriculum terms", async () => {
   // Hiding the print button is not the same as refusing the action: the print endpoint is
   // reachable by URL. Before this guard existed it returned 200 and put a 1995 record on a
   // 2017 form. Only run when a Form 137 learner is actually in the database.
-  const old = getDb()
-    .prepare(
-      `SELECT student_id FROM enrollment_terms WHERE curriculum = 'old' LIMIT 1`,
-    )
-    .get() as { student_id: number } | undefined;
+  const db = await getDb();
+  const found = await db.execute(
+    `SELECT student_id FROM enrollment_terms WHERE curriculum = 'old' LIMIT 1`,
+  );
+  const old = found.rows[0];
 
   if (!old) return; // nothing imported yet; the browser pass covers this too
 
   for (const form of ["jhs", "shs"] as const) {
-    const record = buildSf10Record(old.student_id, form);
+    const record = await buildSf10Record(Number(old.student_id), form);
     assert.equal(
       record?.terms.length ?? 0,
       0,
@@ -166,6 +161,17 @@ check("an old-curriculum learner is never offered an SF10 print", () => {
   assert.equal(hasOldCurriculum(old), true);
   assert.equal(hasOldCurriculum(modern), false);
 });
+
+for (const { name, fn } of checks) {
+  try {
+    await fn();
+    passed++;
+  } catch (err) {
+    console.log(`  FAIL  ${name}`);
+    console.log(`        ${err instanceof Error ? err.message : err}`);
+    process.exitCode = 1;
+  }
+}
 
 console.log(
   process.exitCode ? "\nform137: FAILURES above\n" : `\nform137: ${passed} checks passed\n`,

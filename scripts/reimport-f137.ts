@@ -14,35 +14,40 @@ import { getDb } from "../lib/db/index.ts";
 import { deleteStudent } from "../lib/db/queries.ts";
 import { importFolder } from "../lib/import/import-sf10.ts";
 
-const db = getDb();
-const n = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
+const db = await getDb();
+const n = async (sql: string) => Number((await db.execute(sql)).rows[0].n);
 
-const old = db
-  .prepare(`SELECT DISTINCT student_id AS id FROM enrollment_terms WHERE curriculum = 'old'`)
-  .all() as { id: number }[];
+const old = await db.execute(
+  `SELECT DISTINCT student_id AS id FROM enrollment_terms WHERE curriculum = 'old'`,
+);
 
-console.log(`\n  clearing ${old.length} Form 137 learners`);
-for (const r of old) deleteStudent(r.id);
+console.log(`\n  clearing ${old.rows.length} Form 137 learners`);
+for (const r of old.rows) await deleteStudent(Number(r.id));
 
-const summary = importFolder("sf10-files/form137");
+const summary = await importFolder("sf10-files/form137");
 console.log(
   `  imported=${summary.imported} updated=${summary.updated} ` +
     `duplicate=${summary.duplicates} failed=${summary.failed}`,
 );
 
-console.log(`\n  students total                 : ${n("SELECT COUNT(*) n FROM students")}`);
+console.log(`\n  students total                 : ${await n("SELECT COUNT(*) n FROM students")}`);
 console.log(
-  `  summary rows left as subjects  : ${n(
-    "SELECT COUNT(*) n FROM term_subjects WHERE subject_name LIKE '%General%Average%' OR subject_name LIKE '%GWA%'",
+  // Scoped to old-curriculum terms. Unscoped it also counts a JHS learner whose SF10 really
+  // does carry a row named "Quartetrly General Average", which is not what this is checking.
+  `  summary rows left as subjects  : ${await n(
+    `SELECT COUNT(*) n FROM term_subjects s
+       JOIN enrollment_terms t ON t.id = s.term_id
+      WHERE t.curriculum = 'old'
+        AND (s.subject_name LIKE '%General%Average%' OR s.subject_name LIKE '%GWA%')`,
   )}`,
 );
 console.log(
-  `  old terms with general_average : ${n(
+  `  old terms with general_average : ${await n(
     "SELECT COUNT(*) n FROM enrollment_terms WHERE curriculum='old' AND general_average IS NOT NULL",
-  )} of ${n("SELECT COUNT(*) n FROM enrollment_terms WHERE curriculum='old'")}`,
+  )} of ${await n("SELECT COUNT(*) n FROM enrollment_terms WHERE curriculum='old'")}`,
 );
 console.log(
-  `  old terms with promotion remark: ${n(
+  `  old terms with promotion remark: ${await n(
     "SELECT COUNT(*) n FROM enrollment_terms WHERE curriculum='old' AND promotion_remark IS NOT NULL",
   )}`,
 );
