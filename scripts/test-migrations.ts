@@ -21,6 +21,7 @@ import {
   addColumnIfMissing,
   currentVersion,
   runMigrations,
+  setVersion,
   type Migration,
 } from "../lib/db/migrations.ts";
 
@@ -51,7 +52,7 @@ async function withMigrations(db: Client, list: Migration[]) {
     const tx = await db.transaction("write");
     try {
       await m.up(tx);
-      await tx.execute(`PRAGMA user_version = ${m.version}`);
+      await setVersion(tx, m.version);
       await tx.commit();
       applied.push(m.name);
     } catch (err) {

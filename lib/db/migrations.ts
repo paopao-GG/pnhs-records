@@ -18,8 +18,8 @@
  *
  * Append to `MIGRATIONS` with the next number. Never edit or renumber an entry that has run
  * anywhere — fix a bad migration with a new one. Each runs in its own transaction, so a
- * failure leaves `user_version` untouched and the database consistent. That holds against the
- * hosted database too: `ALTER TABLE` and `PRAGMA user_version` both roll back inside a libSQL
+ * failure leaves the recorded version untouched and the database consistent. That holds against
+ * the hosted database too: `ALTER TABLE` and the version write both roll back inside a libSQL
  * transaction.
  *
  * Back up before running against real data.
@@ -104,16 +104,70 @@ export async function addColumnIfMissing(
   column: string,
   definition: string,
 ): Promise<void> {
-  const cols = await db.execute(`PRAGMA table_info(${table})`);
+  // `pragma_table_info(...)` rather than `PRAGMA table_info ...`: the table-valued form is an
+  // ordinary SELECT, and a hosted database allows those where it refuses bare pragma statements.
+  const cols = await db.execute({
+    sql: `SELECT name FROM pragma_table_info(?)`,
+    args: [table],
+  });
   if (cols.rows.length === 0) return; // table not created yet
   if (cols.rows.some((c) => c.name === column)) return;
   await db.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
-export async function currentVersion(db: Runner): Promise<number> {
-  const result = await db.execute(`PRAGMA user_version`);
-  return Number(result.rows[0]?.user_version ?? 0);
+/**
+ * The schema version lives in a table, not in `PRAGMA user_version`.
+ *
+ * The pragma was the obvious choice for a local file and does not survive being hosted: Turso
+ * refuses to execute `PRAGMA user_version = 1` at all - *"SQL not allowed statement"* - so the
+ * runner could apply a migration and then fail to record that it had. A one-row table works
+ * identically everywhere, and has one property the pragma lacks: it is ordinary data, so it is
+ * covered by the surrounding transaction and by backups.
+ */
+async function ensureVersionTable(db: Runner): Promise<void> {
+  await db.execute(
+    `CREATE TABLE IF NOT EXISTS schema_version (
+       id       INTEGER PRIMARY KEY CHECK (id = 1),
+       version  INTEGER NOT NULL
+     )`,
+  );
 }
+
+export async function currentVersion(db: Runner): Promise<number> {
+  await ensureVersionTable(db);
+
+  const stored = await db.execute(`SELECT version FROM schema_version WHERE id = 1`);
+  if (stored.rows[0]) return Number(stored.rows[0].version);
+
+  /*
+   * No row yet. Adopt whatever `PRAGMA user_version` says before assuming zero: databases
+   * created before this table exist and are already migrated, and starting them from scratch
+   * would re-run every migration. They happen to be idempotent, but relying on that is luck.
+   *
+   * A hosted database rejects the read as well, which correctly yields 0 - it can only be a
+   * database this mechanism created.
+   */
+  let adopted = 0;
+  try {
+    const pragma = await db.execute(`PRAGMA user_version`);
+    adopted = Number(pragma.rows[0]?.user_version ?? 0);
+  } catch {
+    adopted = 0;
+  }
+
+  await setVersion(db, adopted);
+  return adopted;
+}
+
+async function setVersion(db: Runner, version: number): Promise<void> {
+  await db.execute({
+    sql: `INSERT INTO schema_version (id, version) VALUES (1, ?)
+          ON CONFLICT(id) DO UPDATE SET version = excluded.version`,
+    args: [version],
+  });
+}
+
+export { setVersion };
 
 export interface MigrationResult {
   from: number;
@@ -136,8 +190,7 @@ export async function runMigrations(db: Client): Promise<MigrationResult> {
     const tx = await db.transaction("write");
     try {
       await migration.up(tx);
-      // PRAGMA does not accept a bound parameter, and version is a number we control.
-      await tx.execute(`PRAGMA user_version = ${migration.version}`);
+      await setVersion(tx, migration.version);
       await tx.commit();
       applied.push(`${migration.version}: ${migration.name}`);
     } catch (err) {

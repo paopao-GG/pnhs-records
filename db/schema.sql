@@ -6,6 +6,15 @@
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
+-- Which migrations have been applied. See lib/db/migrations.ts.
+--
+-- A table rather than PRAGMA user_version because a hosted database refuses to execute
+-- `PRAGMA user_version = n` at all, which would let a migration apply without being recorded.
+CREATE TABLE IF NOT EXISTS schema_version (
+  id       INTEGER PRIMARY KEY CHECK (id = 1),
+  version  INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS students (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   -- Learner Reference Number. The only reliable identity key: Filipino name matching is
