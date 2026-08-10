@@ -8,4 +8,15 @@ data/
 
 # Generated SF10 files from the spike and export checks.
 spike-output/
-.env.local
+
+# Secrets. Broad on purpose: .env.local was covered and .env.production.local was not,
+# which is exactly the file that holds production credentials.
+#
+# The negation must stay LAST. Git takes the final matching pattern, so a later `.env.example`
+# line silently re-ignores the one file here that is meant to be committed.
+.env
+.env.*
+!.env.example
+
+# Database backups. Learner data, same rule as data/.
+backups/

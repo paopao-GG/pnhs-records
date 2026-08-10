@@ -24,7 +24,9 @@
     "migrate:originals": "node --env-file=.env.local scripts/migrate-originals.ts",
     "test:blob": "node scripts/test-blob.ts",
     "test:blob:r2": "node --env-file=.env.local scripts/test-blob.ts",
-    "dev:r2": "next dev"
+    "push:archive": "node --env-file=.env.production.local scripts/push-to-turso.ts",
+    "backup": "node --env-file=.env.production.local scripts/backup.ts",
+    "smoke": "node scripts/smoke.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1106.0",

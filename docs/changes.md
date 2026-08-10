@@ -257,29 +257,28 @@ See [production-design.md](production-design.md) §5 for the full design.
 
 ---
 
-## 9. Home server deployment · advisory
+## 9. Deployment · **DONE (code side)**
 
-Specs, setup and backup policy rather than code — sizing is grounded in the real files.
+Deployed to Vercel rather than a home server: the app on Vercel `sin1`, the database on Turso,
+original files in a private Cloudflare R2 bucket. See
+[production-design.md](production-design.md) §6, which was rewritten for this.
 
-| Resource | At 5,000 learners |
-|---|---|
-| Original files | ~900 MB (measured average 180 KB × 5,000) |
-| Database | ~40–80 MB (measured 7.6 KB per learner) |
-| **Total working set** | **~2 GB** |
-| RAM | 8 GB comfortable, 4 GB workable |
-| CPU | Any modern dual or quad core |
-| Disk | **SSD** — SQLite is sensitive to write latency |
+What the change of target settled:
 
-Storage is not the constraint at this scale. The real requirements are an SSD, a backup
-schedule, and keeping the database **off any synced folder**.
+- **Nothing may assume a writable disk.** That drove the whole of Phases 1-3: the database, the
+  stored originals and the folder scan each assumed one.
+- **Vercel Blob would have run out.** ~900 MB of originals at 5,000 learners against roughly 1 GB
+  included. R2 gives 10 GB and charges no egress.
+- **Backups stopped being free.** Copying `data/pnhs.db` was something the registrar could do
+  without being told. `npm run backup` replaces it, and now has to be scheduled and *tested* —
+  the single biggest operational regression from leaving the local machine.
+- **Vercel Hobby is non-commercial-use only**, which this system is not. Accepted knowingly.
 
-The database figure is a conservative ceiling rather than a measurement — 44% of the current
-database is fixed per-table overhead, so extrapolating from 22 learners overstates it. It errs
-high, which is safe for buying hardware.
+`npm run smoke -- <url> --write` verifies a running instance: the 401s, the 409 archive-only
+guard, and a file through ticket → object storage → import → byte-identical download.
 
-Also covered in production-design §6: one backup copy must **leave the building** and be
-restore-tested, and the personal data of thousands of children needs an owner and encryption at
-rest.
+Remaining and not code: create the Turso database, create the Vercel project, set the
+environment variables, add the deployed origin to the R2 CORS rule, and schedule the backup.
 
 ---
 

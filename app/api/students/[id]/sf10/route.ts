@@ -14,6 +14,14 @@ import { requireUserForApi } from "@/lib/auth/current-user.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+/*
+ * Run close to the school and to the database.
+ *
+ * `sin1` (Singapore) is the nearest Vercel region to Albay, and the Turso database sits in the
+ * matching region. The default `iad1` is in Virginia, which puts a Pacific round trip on every
+ * query - and a record page makes several before it can render.
+ */
+export const preferredRegion = "sin1";
 
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 

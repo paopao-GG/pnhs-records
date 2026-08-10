@@ -26,6 +26,8 @@ import { isRemoteStore, presignUpload } from "@/lib/blob/store.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Colocated with the database; see the sf10 route for why.
+export const preferredRegion = "sin1";
 
 const SHA256 = /^[0-9a-f]{64}$/;
 const ALLOWED_EXTENSIONS = [".xlsx", ".docx"];

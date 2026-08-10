@@ -359,88 +359,93 @@ sequenceDiagram
 
 ## 6. Deployment
 
-### Hardware
+> **This section was rewritten after the deployment target changed.** It originally specified a
+> mini-PC on the school LAN. The system now runs on Vercel with a hosted database and object
+> storage. The hardware advice is gone; the obligations that came with holding this data are not,
+> and several of them got *harder*, not easier.
 
-72 real files average **180 KB** — that figure is measured and reliable.
+### What runs where
 
-The database figure is weaker and should be read as a conservative ceiling, not a measurement.
-The current database is 167 KB for 22 learners, which divides to 7.6 KB each — but 18 of its 41
-pages are the minimum one-page-per-table-and-index overhead, so **44% of it is fixed cost that
-does not grow with learners**. Extrapolating linearly from 22 rows overstates the real marginal
-cost, probably by several times. It errs high, which is safe for capacity planning; just don't
-quote it as a per-learner measurement.
+| | |
+|---|---|
+| Application | Vercel, region `sin1` (Singapore) — nearest to Albay |
+| Database | Turso (libSQL), same region |
+| Original files | Cloudflare R2, private bucket |
+| Templates | Read from the deployment bundle, unchanged |
 
-| Resource | At 5,000 learners | Reasoning |
+Region matters more than it looks. Every page is a handful of queries, and the default `iad1`
+puts each one on a Pacific round trip. `preferredRegion` is pinned on the route handlers.
+
+### Capacity
+
+72 real files average **180 KB** — measured and reliable.
+
+| Resource | At 5,000 learners | Against the free allowance |
 |---|---|---|
-| Original files | ~900 MB | 5,000 × 180 KB |
-| Database | 40–80 MB | Conservative ceiling; see the note above — the real figure is likely well under this |
-| **Total working set** | **~2 GB** | Storage is not the constraint |
-| RAM | 8 GB comfortable, 4 GB workable | Next.js plus SQLite page cache, ~10 concurrent users |
-| CPU | Any modern dual/quad core | Load is I/O and template filling, not computation |
-| Disk | **SSD, strongly recommended** | SQLite is sensitive to write latency |
+| Original files | ~900 MB | R2 gives 10 GB. Comfortable. |
+| Database | 40–80 MB | Turso gives several GB. Not close. |
+| Bandwidth | Small — records are text | R2 charges no egress at all |
 
-Any small-form-factor office PC or mini-PC from the last decade is sufficient. A refurbished
-i5 with 8 GB and an SSD is comfortably more than enough — this workload is small. Spend the
-budget on the SSD and a backup disk, not the processor.
+The database figure is a conservative ceiling rather than a measurement: 44% of the current
+database is fixed per-table overhead, so extrapolating from a small sample overstates it. It errs
+high, which is safe.
+
+**The one that would have bitten:** Vercel Blob includes roughly 1 GB on the free plan, and
+5,000 learners is ~900 MB. That ceiling would have been reached during the first full intake,
+which is why originals went to R2 instead.
 
 ### Operational requirements
 
-These matter more than the hardware:
+The LAN version of this list was about disks and power. The hosted version is about credentials
+and copies.
 
-1. **The database must not live on a synced folder.** OneDrive, Google Drive and Dropbox
-   corrupt SQLite by copying it mid-write. This is currently true of the development setup and
-   is the most urgent item to fix at deployment.
-2. **Backups, with two properties people usually skip.** A nightly `VACUUM INTO` snapshot to a
-   second disk, retained for some weeks — the database is small enough that this is trivial.
-   But:
-   - **A second disk in the same box is not a backup.** One fire, theft or surge takes both.
-     One copy must leave the building — an encrypted external drive the registrar takes home is
-     enough at this scale.
-   - **An untested backup is a hypothesis.** Restore one into a scratch copy of the app on a
-     schedule and confirm a learner's record opens. A backup nobody has restored has an
-     uncomfortable habit of not restoring.
-   - Take one **before running migrations** (§3) against real data.
-3. **HTTPS on the LAN.** Required for service workers, and appropriate for learner records
-   regardless. A self-signed certificate installed on the school's machines is adequate.
-4. **Do not port-forward this to the internet.** If off-site access is ever wanted, use a VPN
-   or Tailscale. Exposing learner records directly is not an acceptable trade for convenience.
-5. **A UPS**, or at minimum accept that a power cut mid-write is what WAL mode and backups are
-   protecting against.
+1. **Backups are no longer free, and nobody will notice until they are needed.** The registrar
+   used to be able to back up by copying one file. That ability is gone. `npm run backup` writes
+   the hosted database to a local SQLite file — schedule it, and:
+   - **A copy must leave the building.** An encrypted external drive the registrar takes home is
+     enough at this scale. A backup living only in the same cloud account as the database is not
+     a backup against the failure most likely to occur — the account.
+   - **An untested backup is a hypothesis.** Restore one and open a learner record:
+     `$env:PNHS_DB_PATH = 'backups/pnhs-....db'; npm run dev`. Do it on a schedule.
+   - Take one **before running migrations** against real data.
+2. **The R2 bucket must stay private.** Files are served through `/api/students/[id]/original`,
+   which checks the session. A public bucket URL is a shareable link to a child's record and
+   would undo the accounts work entirely.
+3. **Credentials are now the perimeter.** Four secrets — the Turso token and three R2 values —
+   are all that stand between the internet and every record. They belong in Vercel's environment
+   settings and in `.env.local`, never in git (`.gitignore` covers `.env.*`). Rotate them if a
+   laptop holding them is lost.
+4. **Vercel Hobby is non-commercial-use only.** This is a commissioned system for an institution.
+   The technical fit is fine; the terms are not, and an account suspension takes the school's
+   records offline. Moving to Pro also raises function duration from 60 s to 300 s.
+5. **Two admin accounts.** Only an admin can issue accounts or reset a password. A single admin
+   who is away is a system nobody can administer. The Accounts page warns while there is one.
 
 ### Personal data
 
-Worth stating plainly, because neither this system nor its documentation has acknowledged it so
-far: this holds the personal data of **thousands of children**. Names, birthdates, sex, and —
-once Form 137 import lands — parents' names, occupations and home addresses.
+Unchanged in substance, and more pressing now: this holds the personal data of **thousands of
+children** — names, birthdates, sex, and from Form 137 their parents' names, occupations and home
+addresses — on a public URL rather than a machine in a locked office.
 
-That is a materially different obligation from a folder of spreadsheets on one PC, because a
-server makes it reachable and a database makes it bulk-exportable.
-
-Not legal advice, but the things a school would be expected to have thought about:
-
-- **The Philippines' Data Privacy Act (RA 10173) applies to schools.** Someone should be named
-  as accountable for this data, and the school's existing privacy practice should cover it.
-  Flagging it as a live consideration is not the same as having addressed it.
-- **Encryption at rest.** Full-disk encryption on the server is the cheap version and stops the
-  obvious failure — the machine or a backup drive walking out of the building. It does nothing
-  against a running-server compromise, so it is a floor, not a solution.
-- **Encrypt the offsite backup copy.** It is the copy most likely to be lost.
-- **Retention.** Permanent records are, by design, permanent — but `record_history`, sessions
-  and import logs are not, and should not accumulate indefinitely.
-- **Access is a privacy control, not just a convenience.** The adviser role can read every
-  learner in the school; whether that is appropriate is a policy question for the school, not a
-  technical one, and it should be asked rather than assumed.
+- **The Philippines' Data Privacy Act (RA 10173) applies to schools.** Someone should be named as
+  accountable for this data. Flagging it is not the same as having addressed it.
+- **Encryption at rest** is now the provider's, not the school's. That is a floor and not a
+  solution: it does nothing against a leaked credential, which is the realistic failure here.
+- **Encrypt the off-site backup.** It is the copy most likely to be lost.
+- **Retention.** Permanent records are permanent by design; `record_history`, sessions and import
+  logs are not, and should not accumulate indefinitely.
+- **Access is a privacy control.** An adviser can read every learner in the school. That was
+  decided deliberately — no adviser-to-section mapping exists — but it is a policy question the
+  school should be asked, not one this system should answer silently.
 
 ### Scale check at 5,000 learners
 
-Worth stating because the numbers are reassuring:
-
-- ~200,000 `term_subjects` rows. SQLite handles this without effort; the existing indexes on
-  `student_id` and `term_id` are sufficient.
-- Client-side search over a 5,000-row index stays responsive, and is required for offline
-  search anyway.
-- The one thing that *would* need revisiting is bulk-importing thousands of files in a single
-  request. Import should move to a background job with progress rather than one long HTTP call.
+- ~200,000 `term_subjects` rows. The existing indexes on `student_id` and `term_id` are enough.
+- The learner index shipped to the browser for search is ~400 KB at that size. Fine.
+- **Bulk import is the one thing that needed a different shape**, and has one:
+  `npm run push:archive` runs the same importer directly against the hosted database from a
+  machine that already has the files. A thousand files through the browser is two hundred
+  round trips; this is one process with progress and a resume-by-rerun property.
 
 ---
 

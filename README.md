@@ -170,6 +170,34 @@ password or deactivating an account ends that person's other sessions immediatel
 Keep **two** admin accounts. Only an admin can issue accounts or reset a password, so a single
 admin who is away is a system nobody can administer.
 
+## Deploying
+
+The app runs on Vercel with a hosted database and object storage. Nothing needs a writable disk.
+
+1. **Turso database** in Singapore (`sin`) — nearest to Albay. Take the URL and auth token.
+2. **Apply the schema** to it, then create the first admin:
+   ```powershell
+   $env:TURSO_DATABASE_URL='libsql://...'; $env:TURSO_AUTH_TOKEN='...'
+   npm run db:migrate
+   $env:PNHS_ADMIN_PASSWORD='a long passphrase'
+   npm run create-admin -- --username registrar --name "<Full Name>"
+   ```
+3. **Vercel project** from this repo. Set every variable in [.env.example](.env.example), and set
+   the project region to **`sin1`**.
+4. **Add the deployed origin to the R2 bucket's CORS rule.** Without it every browser upload fails
+   with an unhelpful network error.
+5. **Verify it works**, not just that it built:
+   ```powershell
+   $env:PNHS_SMOKE_USER='registrar'; $env:PNHS_SMOKE_PASSWORD='...'
+   npm run smoke -- https://your-app.vercel.app --write
+   ```
+   Then sign in by hand once — the smoke test covers everything except the sign-in form itself.
+6. **Schedule `npm run backup`** and keep one encrypted copy off-site. The registrar can no longer
+   back up by copying a file; see [docs/production-design.md](docs/production-design.md) §6.
+
+To load the school's existing archive, `npm run push:archive -- <folder>` runs the same importer
+directly against the hosted database — far better than a thousand files through the browser.
+
 ## Notes for the next build
 
 - **Deployment** — `data/` currently sits inside a OneDrive-synced folder. While the database

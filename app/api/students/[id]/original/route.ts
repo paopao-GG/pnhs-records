@@ -13,6 +13,8 @@ import { getOriginal, isBlobKey } from "@/lib/blob/store.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Colocated with the database; see the sf10 route for why.
+export const preferredRegion = "sin1";
 
 const MIME: Record<string, string> = {
   ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

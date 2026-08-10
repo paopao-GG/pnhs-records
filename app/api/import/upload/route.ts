@@ -25,6 +25,8 @@ import { getOriginal } from "@/lib/blob/store.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Colocated with the database; see the sf10 route for why.
+export const preferredRegion = "sin1";
 /** Hobby's ceiling. Batches are sized so this is headroom, not a target. */
 export const maxDuration = 60;
 
