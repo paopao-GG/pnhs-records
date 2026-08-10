@@ -19,7 +19,7 @@
 import type { Client } from "@libsql/client";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createDbClient, getClient, LOCAL_DB_PATH } from "./client.ts";
+import { createDbClient, getClient, isRemote, LOCAL_DB_PATH } from "./client.ts";
 import { runMigrations, type MigrationResult } from "./migrations.ts";
 
 const SCHEMA_PATH = join(process.cwd(), "db", "schema.sql");
@@ -54,13 +54,26 @@ export async function openDb(path: string = LOCAL_DB_PATH): Promise<Client> {
 }
 
 /**
+ * Statements that only mean something for a database file we own.
+ *
+ * `journal_mode` and `foreign_keys` are properties of a local SQLite connection. A hosted
+ * database manages its own journalling and rejects the attempt - the failure is an HTTP 400
+ * carrying no explanation, which is a genuinely hard error to read backwards.
+ *
+ * They stay in schema.sql because they are right for the local file, and are filtered out on
+ * the way to a hosted one.
+ */
+const LOCAL_ONLY_PRAGMA = /^\s*PRAGMA\s+(journal_mode|foreign_keys)\b[^;]*;/gim;
+
+/**
  * Create anything missing, then migrate anything that already exists.
  *
  * Order matters: `schema.sql` creates new tables, and only then do migrations alter tables that
  * were already there. See migrations.ts for why both halves are needed.
  */
 export async function applySchema(db: Client): Promise<MigrationResult> {
-  await db.executeMultiple(readFileSync(SCHEMA_PATH, "utf8"));
+  const schema = readFileSync(SCHEMA_PATH, "utf8");
+  await db.executeMultiple(isRemote() ? schema.replace(LOCAL_ONLY_PRAGMA, "") : schema);
   return runMigrations(db);
 }
 

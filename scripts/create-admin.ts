@@ -20,9 +20,24 @@ import { countActiveAdmins, createUser, listUsers } from "../lib/db/users.ts";
 import { applySchema } from "../lib/db/index.ts";
 import { getClient } from "../lib/db/client.ts";
 
+/**
+ * Read `--flag value`, joining everything up to the next flag.
+ *
+ * `--name "Paolo Simeon Satuito"` does not survive the trip through npm and PowerShell as one
+ * argument: the quotes are stripped somewhere in the middle and the script sees three. Taking
+ * only `argv[i + 1]` would silently register the account as "Paolo" - a wrong name in a school
+ * record system, written without complaint.
+ */
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
-  return i === -1 ? undefined : process.argv[i + 1];
+  if (i === -1) return undefined;
+
+  const words: string[] = [];
+  for (let j = i + 1; j < process.argv.length; j++) {
+    if (process.argv[j]!.startsWith("--")) break;
+    words.push(process.argv[j]!);
+  }
+  return words.length ? words.join(" ") : undefined;
 }
 
 const username = arg("username")?.trim();
