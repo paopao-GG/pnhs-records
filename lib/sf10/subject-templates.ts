@@ -82,6 +82,21 @@ export interface CatalogueEntry {
 }
 
 /**
+ * JHS learning-area names that appear on the school's forms but not in the 2017 template's
+ * printed list.
+ *
+ * `Values Education` is what `Edukasyon sa Pagpapakatao` is called on newer forms, and some
+ * forms combine the MAPEH components into two rows rather than four.
+ *
+ * These are offered in the dropdown and nowhere else. They are deliberately NOT added to
+ * `JHS_LEARNING_AREAS` in [jhs-map.ts](./jhs-map.ts): that list is template geometry, and its
+ * order decides which row each subject prints on, which rows get a final-rating formula, and
+ * which eight rows the general average covers. Inserting a name there would move every subject
+ * below it onto the wrong row of every learner's printed record.
+ */
+const JHS_ALTERNATE_AREAS = ["Values Education", "Music & Arts", "PE and Health"];
+
+/**
  * What the "Add subject" dropdown offers for a term.
  *
  * A suggestion list, not a constraint — the school's real files contain subjects this
@@ -90,7 +105,10 @@ export interface CatalogueEntry {
  */
 export function subjectCatalogue(level: number, semester: number | null): CatalogueEntry[] {
   if (level <= 10) {
-    return jhsLearningAreas(level as 7 | 8 | 9 | 10).map((name) => ({ name, category: null }));
+    return [...jhsLearningAreas(level as 7 | 8 | 9 | 10), ...JHS_ALTERNATE_AREAS].map((name) => ({
+      name,
+      category: null,
+    }));
   }
   return shsSubjectsFor(level as 11 | 12, (semester ?? 1) as 1 | 2).map((s) => ({
     name: s.name,
