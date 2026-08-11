@@ -763,6 +763,36 @@ a:hover {
   font-weight: 600;
 }
 
+/* Holds the move arrows and the remove button. Wider than .num, which is sized for a grade. */
+.ledger td.row-actions {
+  width: 96px;
+  white-space: nowrap;
+}
+
+.row-move {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1;
+  padding: 4px 5px;
+  border-radius: 2px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+
+.row-move:hover:not(:disabled) {
+  color: var(--official);
+  border-color: color-mix(in srgb, var(--official) 40%, transparent);
+  background: var(--official-tint);
+}
+
+/* At the top or bottom of the list. Kept visible so the column does not reflow between rows. */
+.row-move:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
 .add-subject {
   display: flex;
   flex-direction: column;

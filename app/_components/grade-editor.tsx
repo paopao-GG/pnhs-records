@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { removeSubject, saveLearnerInfo } from "../actions.ts";
+import { moveSubject, removeSubject, saveLearnerInfo } from "../actions.ts";
 import {
   exactFinalRating,
   finalRating,
@@ -183,7 +183,14 @@ export function GradeEditor({
                                 </span>
                               )}
                             </td>
-                            <td className="num">
+                            <td className="num row-actions">
+                              <MoveSubject
+                                subjectId={s.id}
+                                name={s.subject_name}
+                                isFirst={i === 0}
+                                isLast={i === b.subjects.length - 1}
+                                onStateChange={onStateChange}
+                              />
                               <RemoveSubject
                                 subjectId={s.id}
                                 name={s.subject_name}
@@ -231,6 +238,64 @@ export function GradeEditor({
 
 function round(n: number): number {
   return Math.sign(n) * Math.round(Math.abs(n));
+}
+
+/**
+ * Moves a subject one row up or down.
+ *
+ * No confirmation, unlike removal: the other arrow puts it back. The order is what the SF10
+ * prints, so this is how a record encoded out of sequence is made to match its paper form.
+ */
+function MoveSubject({
+  subjectId,
+  name,
+  isFirst,
+  isLast,
+  onStateChange,
+}: {
+  subjectId: number;
+  name: string;
+  isFirst: boolean;
+  isLast: boolean;
+  onStateChange: (s: SaveState, m?: string) => void;
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+
+  const move = (direction: "up" | "down") =>
+    startTransition(async () => {
+      onStateChange("saving");
+      try {
+        await moveSubject(subjectId, direction);
+        onStateChange("saved");
+        router.refresh();
+      } catch (e) {
+        onStateChange("error", e instanceof Error ? e.message : String(e));
+      }
+    });
+
+  return (
+    <>
+      <button
+        className="row-move"
+        title={`Move ${name} up`}
+        aria-label={`Move ${name} up`}
+        disabled={pending || isFirst}
+        onClick={() => move("up")}
+      >
+        ↑
+      </button>
+      <button
+        className="row-move"
+        title={`Move ${name} down`}
+        aria-label={`Move ${name} down`}
+        disabled={pending || isLast}
+        onClick={() => move("down")}
+      >
+        ↓
+      </button>
+    </>
+  );
 }
 
 function RemoveSubject({

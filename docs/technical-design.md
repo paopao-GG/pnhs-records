@@ -138,6 +138,28 @@ accident:
   nothing could ever read back. Losing the archive copy silently is worse than refusing the
   import.
 
+### Gotcha: a subject's position is data, not presentation
+
+`term_subjects.ordinal` decides three things at once, all through the array index:
+
+- `fillJhs` writes subject *i* into template row `firstSubject + i` — the line of the printed
+  permanent record it occupies.
+- `jhsFinalRatingIsComputed(i)` — rows 13 and 14 have no AVERAGE formula in the template, so the
+  app supplies their final rating and the first 12 belong to Excel.
+- `JHS_GENERAL_AVERAGE_SUBJECT_ROWS = 8` — only the first eight count toward the general average,
+  which decides promotion and honours.
+
+So reordering is a change to the record. `swapSubjectOrder()` writes both moved rows to
+`record_history` and clears any `general_average` imported from the form, for the same reason
+editing a quarter does: the SF10's own general average is a live formula over the first eight
+rows, so the printed workbook recomputes the moment the order changes. Leaving the imported
+figure in place would have the app showing one number and the print showing another.
+
+Two mechanical traps, both covered by [scripts/test-subject-order.ts](../scripts/test-subject-order.ts):
+`deleteSubject` leaves gaps, so the neighbour is found by ordering rather than `ordinal ± 1`; and
+`UNIQUE (term_id, ordinal)` is checked per statement, so a swap needs three UPDATEs with the first
+row parked below the term's minimum.
+
 ### Gotcha: the browser does not choose where its bytes land
 
 There are two key namespaces, and the distinction is a security boundary rather than filing:

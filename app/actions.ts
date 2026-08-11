@@ -13,6 +13,7 @@ import {
   getSchoolSettings,
   getStudent,
   resolveIssue,
+  swapSubjectOrder,
   updateStudent,
   updateSubjectField,
   updateStudentWithHistory,
@@ -241,6 +242,26 @@ export async function addSubject(
 export async function removeSubject(subjectId: number): Promise<void> {
   const user = await requireUser();
   await deleteSubject(subjectId, user.id);
+  revalidatePath("/");
+}
+
+/**
+ * Move a subject one place up or down within its term.
+ *
+ * Position is not presentation: it decides which row of the printed SF10 a subject occupies, and
+ * whether it falls inside the first eight rows that make up the general average. See
+ * `swapSubjectOrder` for the mechanics.
+ */
+export async function moveSubject(subjectId: number, direction: "up" | "down"): Promise<void> {
+  const user = await requireUser();
+
+  // A server action is a public endpoint, so the argument is checked rather than trusted.
+  if (direction !== "up" && direction !== "down") {
+    throw new Error("A subject moves up or down.");
+  }
+
+  const { studentId } = await swapSubjectOrder(subjectId, direction, user.id);
+  if (studentId) revalidatePath(`/students/${studentId}`);
   revalidatePath("/");
 }
 

@@ -825,6 +825,129 @@ export async function deleteSubject(subjectId: number, userId: number | null): P
   }
 }
 
+/**
+ * Move one subject past its neighbour within its term.
+ *
+ * ## Why order is not cosmetic
+ *
+ * Subjects print by position, not by name: `fillJhs` writes subject *i* into template row
+ * `firstSubject + i`. Two other rules read the same index — only the first 12 rows carry the
+ * template's own final-rating formula, and only the first EIGHT count toward the general average.
+ * So a subject's position decides which line of the printed permanent record it occupies and
+ * whether it counts toward the figure that decides promotion.
+ *
+ * `appendSubject` can only add to the end. Without this, a learning area encoded late — a
+ * registrar swapping `Edukasyon sa Pagpapakatao` for `Values Education`, say — lands in row 14 and
+ * silently drops out of the average.
+ *
+ * ## Two things here are easy to get wrong
+ *
+ * **The neighbour is found by ordering, not by `ordinal ± 1`.** `deleteSubject` leaves gaps, which
+ * is the same reason `appendSubject` takes `MAX + 1` rather than a row count.
+ *
+ * **The swap takes three statements.** `term_subjects` is `UNIQUE (term_id, ordinal)` and SQLite
+ * enforces that per statement, so writing each row directly to the other's ordinal collides on the
+ * first one. The first row is parked below the term's minimum — provably free, because ordinals
+ * only ever count up from zero — and collected afterwards.
+ */
+export async function swapSubjectOrder(
+  subjectId: number,
+  direction: "up" | "down",
+  userId: number | null,
+): Promise<{ studentId: number | null }> {
+  const db = await getDb();
+
+  const found = await db.execute({
+    sql: `SELECT s.term_id, s.ordinal, s.subject_name, t.student_id
+            FROM term_subjects s
+            JOIN enrollment_terms t ON t.id = s.term_id
+           WHERE s.id = ?`,
+    args: [subjectId],
+  });
+  if (!found.rows[0]) return { studentId: null };
+
+  const subject = plain<{
+    term_id: number;
+    ordinal: number;
+    subject_name: string;
+    student_id: number;
+  }>(found.rows[0]);
+
+  const neighbour = await db.execute({
+    sql:
+      direction === "up"
+        ? `SELECT id, ordinal, subject_name FROM term_subjects
+            WHERE term_id = ? AND ordinal < ? ORDER BY ordinal DESC LIMIT 1`
+        : `SELECT id, ordinal, subject_name FROM term_subjects
+            WHERE term_id = ? AND ordinal > ? ORDER BY ordinal ASC LIMIT 1`,
+    args: [subject.term_id, subject.ordinal],
+  });
+
+  // Already first or last. Not an error - the buttons are disabled there, and a stale page
+  // should not produce a failure the registrar has to interpret.
+  if (!neighbour.rows[0]) return { studentId: subject.student_id };
+
+  const other = plain<{ id: number; ordinal: number; subject_name: string }>(neighbour.rows[0]);
+
+  const tx = await db.transaction("write");
+  try {
+    const min = await tx.execute({
+      sql: `SELECT MIN(ordinal) AS lowest FROM term_subjects WHERE term_id = ?`,
+      args: [subject.term_id],
+    });
+    const parking = Number(min.rows[0].lowest) - 1;
+
+    await tx.execute({
+      sql: `UPDATE term_subjects SET ordinal = ? WHERE id = ?`,
+      args: [parking, subjectId],
+    });
+    await tx.execute({
+      sql: `UPDATE term_subjects SET ordinal = ? WHERE id = ?`,
+      args: [subject.ordinal, other.id],
+    });
+    await tx.execute({
+      sql: `UPDATE term_subjects SET ordinal = ? WHERE id = ?`,
+      args: [other.ordinal, subjectId],
+    });
+
+    // Both rows moved, so both are recorded. A history that showed only one would describe a
+    // state the table was never in.
+    await recordChange(
+      tx, userId, subject.student_id, "term_subjects", subjectId,
+      "ordinal", subject.ordinal, other.ordinal,
+    );
+    await recordChange(
+      tx, userId, subject.student_id, "term_subjects", other.id,
+      "ordinal", other.ordinal, subject.ordinal,
+    );
+
+    /*
+     * Drop an imported general average, for the same reason editing a quarter does.
+     *
+     * The SF10's own general average is a live formula over the first eight subject rows, so the
+     * printed form recomputes from the new order the moment this is reordered. Keeping the
+     * figure the paper carried would leave the app showing one number and the workbook printing
+     * another, with nothing to say which is right.
+     *
+     * A swap that crosses row eight genuinely changes which subjects are averaged - that is what
+     * reordering is for. Clearing unconditionally keeps one rule rather than a boundary test
+     * that has to stay in step with `JHS_GENERAL_AVERAGE_SUBJECT_ROWS`.
+     */
+    await tx.execute({
+      sql: `UPDATE enrollment_terms SET general_average = NULL
+             WHERE id = ? AND general_average IS NOT NULL`,
+      args: [subject.term_id],
+    });
+
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback().catch(() => {});
+    throw err;
+  }
+
+  return { studentId: subject.student_id };
+}
+
 export async function createSubjects(
   termId: number,
   subjects: { name: string; category?: string | null }[],
