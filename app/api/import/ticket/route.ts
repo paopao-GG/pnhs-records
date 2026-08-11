@@ -12,13 +12,14 @@
  * It mints write access to the bucket. Three things keep that narrow:
  *
  *  - **it requires a session** — it is not reachable signed out;
- *  - **each URL is scoped to exactly one key**, derived from the caller's stated content hash,
- *    so it cannot be replayed against a different object;
+ *  - **each URL is scoped to exactly one key**, and the key is a random one generated here, in
+ *    a namespace separate from the archive, so it cannot address an object that already exists;
  *  - **it expires in five minutes.**
  *
- * The client sends the SHA-256 it computed, which decides the key. A dishonest hash only lets a
- * caller write to a key nobody will look for: the importer recomputes the hash from the bytes it
- * actually reads, and stores the record under that. There is nothing to gain by lying.
+ * The caller states nothing but the file extension. It used to state the SHA-256 as well, which
+ * became the key — and R2 overwrites on PUT, so a signed-in caller could name an existing
+ * archived original and replace it. The importer recomputing the hash protected the database
+ * row and not the object. Now the client has no say in where its bytes land.
  */
 
 import { requireUserForApi } from "@/lib/auth/current-user.ts";
@@ -29,7 +30,6 @@ export const dynamic = "force-dynamic";
 // Colocated with the database; see the sf10 route for why.
 export const preferredRegion = "sin1";
 
-const SHA256 = /^[0-9a-f]{64}$/;
 const ALLOWED_EXTENSIONS = [".xlsx", ".docx"];
 
 export async function POST(request: Request) {
@@ -44,19 +44,14 @@ export async function POST(request: Request) {
     );
   }
 
-  let body: { sha256?: unknown; ext?: unknown };
+  let body: { ext?: unknown };
   try {
     body = await request.json();
   } catch {
     return Response.json({ error: "Expected JSON." }, { status: 400 });
   }
 
-  const sha256 = String(body.sha256 ?? "").toLowerCase();
   const ext = String(body.ext ?? "").toLowerCase();
-
-  if (!SHA256.test(sha256)) {
-    return Response.json({ error: "sha256 must be 64 hex characters." }, { status: 400 });
-  }
   if (!ALLOWED_EXTENSIONS.includes(ext)) {
     return Response.json(
       { error: `Only ${ALLOWED_EXTENSIONS.join(" and ")} files can be imported.` },
@@ -64,6 +59,6 @@ export async function POST(request: Request) {
     );
   }
 
-  const ticket = await presignUpload(sha256, ext);
+  const ticket = await presignUpload(ext);
   return Response.json(ticket, { headers: { "Cache-Control": "no-store" } });
 }

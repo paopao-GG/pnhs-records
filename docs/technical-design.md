@@ -138,6 +138,23 @@ accident:
   nothing could ever read back. Losing the archive copy silently is worse than refusing the
   import.
 
+### Gotcha: the browser does not choose where its bytes land
+
+There are two key namespaces, and the distinction is a security boundary rather than filing:
+
+    originals/<sha256>.<ext>    the archive. Written server-side, from bytes we have read.
+    uploads/<32 hex>.<ext>      one inbound file. Random, and deleted once imported.
+
+The upload key used to be the content hash the browser claimed. R2 overwrites on PUT, so a
+signed-in caller could state the hash of an existing archived original and replace it — and a
+Form 137 has no second source to restore from. The importer recomputing the hash protected the
+database row, not the object; the overwrite had already happened by then.
+
+`uploadKey()` is generated in [`lib/blob/store.ts`](../lib/blob/store.ts) and the ticket route
+never reads a key from the request. **Nothing a client sends may decide where a write goes.**
+`/api/import/upload` deletes the `uploads/` copy once `importBytes()` has written the archive
+one, so the namespace does not accumulate.
+
 ### One driver, two URLs
 
 [`lib/db/client.ts`](../lib/db/client.ts) points `@libsql/client` at a local file unless

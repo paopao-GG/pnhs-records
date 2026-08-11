@@ -21,7 +21,7 @@
 import { revalidatePath } from "next/cache";
 import { importBytes, type FileResult, type ImportSummary } from "@/lib/import/import-sf10.ts";
 import { requireUserForApi } from "@/lib/auth/current-user.ts";
-import { getOriginal } from "@/lib/blob/store.ts";
+import { deleteOriginal, getOriginal, isUploadKey } from "@/lib/blob/store.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -92,6 +92,16 @@ export async function POST(request: Request) {
         continue;
       }
       results.push(await importOne(bytes, filename));
+
+      /*
+       * The inbound copy has served its purpose. `importBytes` has written the archive copy
+       * under its own content-hash key, from the bytes just read, so this one is a duplicate.
+       *
+       * Deleted whether or not the import succeeded: a failed parse leaves nothing that refers
+       * to this object, and re-importing uploads it again. Left behind, every file the school
+       * ever imports would sit in the bucket twice.
+       */
+      if (isUploadKey(key)) await deleteOriginal(key);
     }
   } else {
     let form: FormData;

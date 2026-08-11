@@ -9,6 +9,7 @@ import {
   appendSubject,
   deleteStudent,
   deleteSubject,
+  getOriginalFile,
   getSchoolSettings,
   getStudent,
   resolveIssue,
@@ -28,6 +29,7 @@ import {
 import { jhsFinalRatingIsComputed, jhsLearningAreas } from "@/lib/sf10/jhs-map.ts";
 import { shsSubjectsFor } from "@/lib/sf10/subject-templates.ts";
 import { requireUser } from "@/lib/auth/current-user.ts";
+import { deleteOriginal } from "@/lib/blob/store.ts";
 
 /*
  * Every action below begins with `requireUser()`.
@@ -131,10 +133,21 @@ export async function saveRecord(edit: RecordEdit): Promise<void> {
 }
 
 /**
- * Permanently deletes a learner record.
+ * Permanently deletes a learner record, and the imported original it came from.
  *
  * The typed LRN is re-checked here, not just in the browser: a server action is a public
  * endpoint, and this destroys a permanent academic record with no undo.
+ *
+ * ## The file goes too
+ *
+ * A Form 137 carries the learner's parents' names, occupation and home address. Leaving that
+ * document in the bucket after the registrar has deleted the record means the deletion did not
+ * happen — the most sensitive part of it simply moved out of sight.
+ *
+ * Order matters, and this order is the safe one. The database row goes first; the object
+ * second. A failure between them orphans a file nothing refers to, which costs storage and can
+ * be swept up later. The reverse order destroys the file belonging to a record that then
+ * survives, and there is no sweeping that up.
  */
 export async function deleteRecord(studentId: number, confirmLrn: string): Promise<void> {
   await requireUser();
@@ -146,7 +159,12 @@ export async function deleteRecord(studentId: number, confirmLrn: string): Promi
     throw new Error("The LRN you typed does not match this learner's LRN.");
   }
 
+  // Read before deleting: `deleteStudent` clears stored_path, so afterwards there is nothing
+  // left to say which object belonged to this learner.
+  const original = await getOriginalFile(studentId);
+
   await deleteStudent(studentId);
+  if (original) await deleteOriginal(original.stored_path);
 
   revalidatePath("/");
   redirect("/?deleted=1");

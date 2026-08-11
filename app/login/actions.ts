@@ -11,7 +11,12 @@ import {
   pruneOldAttempts,
   recordFailedAttempt,
 } from "@/lib/auth/rate-limit.ts";
-import { createSession, findUserForLogin, revokeSession } from "@/lib/db/users.ts";
+import {
+  createSession,
+  findUserForLogin,
+  pruneExpiredSessions,
+  revokeSession,
+} from "@/lib/db/users.ts";
 
 /** Deliberately identical for every failure. See below. */
 const REJECTED = "That username or password is incorrect.";
@@ -58,7 +63,15 @@ export async function signIn(_prev: LoginState, form: FormData): Promise<LoginSt
   }
 
   await clearAttempts(username);
-  void pruneOldAttempts();
+
+  /*
+   * Housekeeping, not awaited - the user should not wait on it to sign in.
+   *
+   * The `.catch()` is not decoration. An unhandled rejection terminates the Node process by
+   * default, so without it one transient database error during a background DELETE takes down
+   * the request that had already authenticated successfully.
+   */
+  void Promise.all([pruneOldAttempts(), pruneExpiredSessions()]).catch(() => {});
 
   const { token, expires } = await createSession(user.id);
   const jar = await cookies();
@@ -85,6 +98,6 @@ export async function signOut(): Promise<void> {
  * password for a username that does not exist. Generated once with the current parameters.
  */
 const DUMMY_HASH =
-  "scrypt$16384$8$1$00000000000000000000000000000000$" +
-  "0000000000000000000000000000000000000000000000000000000000000000" +
-  "0000000000000000000000000000000000000000000000000000000000000000";
+  "scrypt$16384$8$1$855638b7d0938fc25921d430238c1bb7$" +
+  "9be45a184f8feb6801fa8230a1da6c9e2ad7e3c9f40e2c022aff6b4b7c670742" +
+  "d8a401ecb952c17bf4864fbd19179814dc4c0b26f2695af3dcf8978a050a790d";

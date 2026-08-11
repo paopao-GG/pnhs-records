@@ -15,7 +15,7 @@
  *     working, which is the whole thing those actions were trying to stop.
  */
 
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { getDb } from "./index.ts";
 import type { Row } from "@libsql/client";
 import { hashPassword } from "../auth/password.ts";
@@ -216,17 +216,4 @@ export async function revokeSession(token: string | undefined): Promise<void> {
 export async function pruneExpiredSessions(): Promise<void> {
   const db = await getDb();
   await db.execute(`DELETE FROM sessions WHERE expires_at <= datetime('now')`);
-}
-
-/**
- * Compare two secrets without leaking their difference through timing.
- *
- * Exported because the create-admin script compares a confirmation, and hand-rolling this a
- * second time is how it gets hand-rolled wrongly.
- */
-export function secretsMatch(a: string, b: string): boolean {
-  const ba = Buffer.from(a);
-  const bb = Buffer.from(b);
-  if (ba.length !== bb.length) return false;
-  return timingSafeEqual(ba, bb);
 }

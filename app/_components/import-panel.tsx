@@ -10,7 +10,7 @@ import type { ImportSummary, FileResult } from "@/lib/import/import-sf10.ts";
  *
  * ## How a file gets in
  *
- *     browser --(1) ticket--> server        one presigned PUT, one key, five minutes
+ *     browser --(1) ticket--> server        one presigned PUT, one server-chosen key, 5 minutes
  *     browser --(2) PUT-----> object store  the bytes never pass through a function
  *     browser --(3) keys----> server        small batches; the server reads, parses, writes
  *
@@ -31,12 +31,6 @@ const BATCH_SIZE = 5;
 interface Uploaded {
   key: string;
   filename: string;
-}
-
-/** The SHA-256 the ticket endpoint needs, computed in the browser. */
-async function sha256Of(file: File): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 const extensionOf = (name: string) => {
@@ -83,7 +77,7 @@ export function ImportPanel() {
         const ticketRes = await fetch("/api/import/ticket", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sha256: await sha256Of(file), ext }),
+          body: JSON.stringify({ ext }),
         });
 
         // 409 means no object store is configured - post the file to the server instead.

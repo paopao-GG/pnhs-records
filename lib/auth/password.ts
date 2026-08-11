@@ -90,10 +90,16 @@ const BANNED = [
   "national high school",
   "12345678",
   "qwerty",
-  "admin",
-  "adviser",
-  "registrar",
 ];
+
+/**
+ * Role names, refused only as whole words.
+ *
+ * These were in the list above, matched as substrings, which refused any passphrase containing
+ * them inside a longer word - "the administrator sang badly" is a perfectly good password and
+ * was rejected. A rule that turns down good passwords teaches people to pick worse ones.
+ */
+const BANNED_WORDS = /\b(admin|adviser|registrar|teacher)\b/;
 
 export function passwordProblem(password: string, username?: string): string | null {
   if (password.length < MIN_PASSWORD_LENGTH) {
@@ -111,6 +117,10 @@ export function passwordProblem(password: string, username?: string): string | n
     if (lower.includes(bad)) {
       return `The password must not contain "${bad}".`;
     }
+  }
+  const word = BANNED_WORDS.exec(lower);
+  if (word) {
+    return `The password must not contain the word "${word[1]}".`;
   }
   // A single repeated character clears the length rule but nothing else.
   if (new Set(password).size < 5) {

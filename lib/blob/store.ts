@@ -24,9 +24,22 @@
  * Nothing here ever produces a public URL, and the bucket has no public access enabled: a
  * shareable link to a child's record would undo the whole of the accounts work by a side door.
  * Presigned URLs are used only for *upload*, are scoped to one key, and expire in minutes.
+ *
+ * ## Two namespaces, and why
+ *
+ *     originals/<sha256>.<ext>   the archive. Written by the server, from bytes it has read.
+ *     uploads/<random>.<ext>     a browser's inbound file. Deleted once imported.
+ *
+ * The upload key is **random and chosen here**, never derived from anything the browser says.
+ * It used to be the content hash the client claimed, which meant a signed-in caller could name
+ * an object that already existed and have R2 overwrite it - replacing an archived Form 137,
+ * the only reissuable copy of a pre-K-12 record, with bytes of their choosing. A random key in
+ * a separate namespace cannot collide with an existing object, so there is no longer anything
+ * for the client to be honest about.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   S3Client,
@@ -36,11 +49,14 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
-/** Everything we store sits under this prefix, so a stray key cannot address anything else. */
+/** The archive: content hash plus the original extension. Both backings use the same key. */
 const PREFIX = "originals/";
 
-/** Content hash plus the original extension. Both backings use the same key. */
-const KEY_PATTERN = /^originals\/[0-9a-f]{64}\.[a-z0-9]{1,8}$/;
+/** Inbound browser uploads, awaiting import. Random, so nothing can be aimed at. */
+const UPLOAD_PREFIX = "uploads/";
+
+/** Everything we write matches this, so a stray key cannot address anything else. */
+const KEY_PATTERN = /^(?:originals\/[0-9a-f]{64}|uploads\/[0-9a-f]{32})\.[a-z0-9]{1,8}$/;
 
 const MIME: Record<string, string> = {
   ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -84,20 +100,42 @@ function client(): S3Client {
 }
 
 /**
- * The canonical key for a file, from the SHA-256 the importer already computes.
+ * The extension part of a key.
  *
- * The extension is rebuilt from the trailing alphanumeric run rather than filtered, so that
- * whatever comes in, the result always satisfies `isBlobKey()`. Stripping the offending
- * characters instead looked equivalent and was not: `"../../evil"` filtered down to `"....evil"`,
- * which the guard then refused — meaning the file would have been stored under a key nothing
- * could ever read back, losing the archive copy silently.
+ * Rebuilt from the trailing alphanumeric run rather than filtered, so that whatever comes in,
+ * the result always satisfies `isBlobKey()`. Stripping the offending characters instead looked
+ * equivalent and was not: `"../../evil"` filtered down to `"....evil"`, which the guard then
+ * refused — meaning the file would have been stored under a key nothing could ever read back,
+ * losing the archive copy silently.
  */
+function suffix(ext: string): string {
+  const match = /\.?([a-z0-9]{1,8})$/.exec(ext.toLowerCase());
+  return match ? match[1] : "bin";
+}
+
+/** The canonical archive key for a file, from the SHA-256 the importer already computes. */
 export function blobKey(sha256: string, ext: string): string {
   if (!/^[0-9a-f]{64}$/.test(sha256)) {
     throw new Error(`blobKey needs a SHA-256 hex digest, got ${JSON.stringify(sha256)}`);
   }
-  const match = /\.?([a-z0-9]{1,8})$/.exec(ext.toLowerCase());
-  return `${PREFIX}${sha256}.${match ? match[1] : "bin"}`;
+  return `${PREFIX}${sha256}.${suffix(ext)}`;
+}
+
+/**
+ * A key for one inbound upload. 128 bits of randomness, so it names nothing that exists.
+ *
+ * Deliberately not content-addressed: the only party who could supply a hash before the bytes
+ * arrive is the browser, and a key the caller chooses is a key the caller can aim at an
+ * existing object. The archive copy is written server-side afterwards, from the bytes actually
+ * read, under `blobKey()`.
+ */
+export function uploadKey(ext: string): string {
+  return `${UPLOAD_PREFIX}${randomBytes(16).toString("hex")}.${suffix(ext)}`;
+}
+
+/** Is this the temporary copy of an upload, rather than an archived original? */
+export function isUploadKey(stored: string): boolean {
+  return isBlobKey(stored) && normaliseKey(stored).startsWith(UPLOAD_PREFIX);
 }
 
 /**
@@ -187,11 +225,29 @@ export async function getOriginal(stored: string): Promise<Uint8Array | null> {
   }
 }
 
+/**
+ * Remove a stored file. Both backings, because "delete this learner" has to mean it.
+ *
+ * Never throws: a bucket that cannot be reached must not roll back a deletion that already
+ * happened in the database. The failure mode is an orphaned object, which is recoverable; the
+ * alternative is a record the registrar believes is gone and is not.
+ */
 export async function deleteOriginal(stored: string): Promise<void> {
-  if (!isRemoteStore() || !isBlobKey(stored)) return;
-  await client()
-    .send(new DeleteObjectCommand({ Bucket: bucket(), Key: normaliseKey(stored) }))
-    .catch(() => {});
+  if (!isBlobKey(stored)) return;
+  const key = normaliseKey(stored);
+
+  if (isRemoteStore()) {
+    await client()
+      .send(new DeleteObjectCommand({ Bucket: bucket(), Key: key }))
+      .catch(() => {});
+    return;
+  }
+
+  try {
+    rmSync(diskPath(key), { force: true });
+  } catch {
+    /* already gone, or never written */
+  }
 }
 
 /**
@@ -200,15 +256,14 @@ export async function deleteOriginal(stored: string): Promise<void> {
  * The browser uploads straight to R2 because a Vercel function caps request bodies at 4.5 MB,
  * which at ~220 KB per SF10 tops a single request out at about twenty files.
  *
- * Scoped to one key and minutes of validity: a broader or longer-lived credential in a browser
- * is a bucket anyone who reads the network tab can write to.
+ * Scoped to one key we generated and minutes of validity: a broader or longer-lived credential
+ * in a browser is a bucket anyone who reads the network tab can write to.
  */
 export async function presignUpload(
-  sha256: string,
   ext: string,
   expiresInSeconds = 300,
 ): Promise<{ key: string; url: string; contentType: string }> {
-  const key = blobKey(sha256, ext);
+  const key = uploadKey(ext);
   const contentType = MIME[ext.toLowerCase()] ?? "application/octet-stream";
 
   if (!isRemoteStore()) {

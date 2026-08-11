@@ -30,7 +30,6 @@
  */
 
 import { readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
 
 const args = process.argv.slice(2);
 const base = (args.find((a) => a.startsWith("http")) ?? "http://localhost:3000").replace(/\/$/, "");
@@ -74,7 +73,7 @@ console.log(`  mode   : ${write ? "read + write" : "read only"}\n`);
   const ticket = await fetch(`${base}/api/import/ticket`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sha256: "a".repeat(64), ext: ".docx" }),
+    body: JSON.stringify({ ext: ".docx" }),
   });
   ok("signed out: upload ticket returns 401", ticket.status === 401, `(${ticket.status})`);
 
@@ -151,18 +150,26 @@ if (write) {
     process.exit(failures ? 1 : 0);
   }
 
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
-
   // 1. ticket
   const ticketRes = await fetch(`${base}/api/import/ticket`, {
     method: "POST",
     headers: authed({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ sha256, ext: ".docx" }),
+    body: JSON.stringify({ ext: ".docx" }),
   });
   ok("a signed-in caller gets an upload ticket", ticketRes.ok, `(${ticketRes.status})`);
   if (!ticketRes.ok) process.exit(1);
   const ticket = (await ticketRes.json()) as { key: string; url: string; contentType: string };
-  ok("the ticket key is the content hash", ticket.key === `originals/${sha256}.docx`, ticket.key);
+
+  /*
+   * The key must be one the server invented, in the uploads namespace - not one the caller
+   * could have chosen. When it was the content hash, a signed-in caller could name an archived
+   * original and have the PUT overwrite it.
+   */
+  ok(
+    "the ticket key is server-generated, outside the archive",
+    /^uploads\/[0-9a-f]{32}\.docx$/.test(ticket.key),
+    ticket.key,
+  );
 
   // 2. bytes straight to storage
   const put = await fetch(ticket.url, {
@@ -189,6 +196,23 @@ if (write) {
     "nothing failed to parse",
     summary.failed === 0,
     `(${summary.results.map((r) => r.error).filter(Boolean).join("; ")})`,
+  );
+
+  /*
+   * The inbound copy is deleted once imported - the archive copy the server wrote is the one
+   * that is kept. Replaying the same key is how that is visible from out here: the object is
+   * gone, so the import cannot read it back.
+   */
+  const replay = await fetch(`${base}/api/import/upload`, {
+    method: "POST",
+    headers: authed({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ files: [{ key: ticket.key, filename: "smoke-test.docx" }] }),
+  });
+  const replayed = (await replay.json()) as { results: { status: string; error?: string }[] };
+  ok(
+    "the uploaded copy is cleaned up after import",
+    replayed.results[0]?.status === "failed",
+    `(${replayed.results[0]?.status})`,
   );
 
   const studentId = summary.results[0]?.studentId;

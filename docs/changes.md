@@ -282,6 +282,39 @@ environment variables, add the deployed origin to the R2 CORS rule, and schedule
 
 ---
 
+## 10. Security review of the deployed shape · **DONE**
+
+A review of everything #6 and #9 added. Three findings were worth stopping for, and all three
+were places where a rule was written down correctly and enforced somewhere it did not reach.
+
+**The browser chose its own upload key.** The presigned PUT was scoped to a key derived from the
+SHA-256 the *client* stated, so a signed-in caller could name an archived original and have R2
+overwrite it. The comment defending this said a dishonest hash "only lets a caller write to a key
+nobody will look for" — true of the database row, which the importer keys by a hash it recomputes,
+and false of the object, which had already been replaced. A Form 137 is the only reissuable copy
+of a pre-K-12 record. Upload keys are now random and generated server-side, in a separate
+`uploads/` namespace that cannot name anything in the archive, and are deleted after import.
+
+**Deleting a learner did not delete their file.** `deleteOriginal()` had no callers outside a
+test. `deleteStudent()` cleared the learner but left the document — parents' names, occupation,
+home address — in the bucket indefinitely, for a record the registrar had been told was gone.
+`deleteRecord()` now removes the object after the row, in that order: a failure between the two
+orphans a file, and the reverse order destroys the file of a record that survives.
+
+**A background prune could take down the sign-in route.** `void pruneOldAttempts()` with no
+`.catch` — an unhandled rejection ends the Node process by default, so one transient database
+error during housekeeping would kill the request that had just authenticated successfully.
+
+Also: response headers (`frame-ancestors`, `nosniff`, `Referrer-Policy`), expired sessions now
+actually pruned, `Content-Disposition` filenames stripped of the control characters that turn a
+download into a 500, and the password policy no longer refusing "the administrator sang badly"
+for containing `admin`.
+
+Verified by `npm test` (62), a full `npm run smoke -- --write` against a scratch database and the
+real bucket, and by checking all 20 stored originals still read back.
+
+---
+
 ## Open questions
 
 Carried from the review; each one changes work that follows.

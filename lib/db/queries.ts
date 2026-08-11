@@ -728,8 +728,13 @@ export async function deleteStudent(studentId: number): Promise<void> {
     // The import history row is KEPT - it is the record of when that file came in - but it
     // must stop claiming to own a learner. `importBytes` treats a row with no live student as
     // not-yet-imported, which is what lets the file be imported again to restore the record.
+    //
+    // `stored_path` is cleared because the caller deletes the object itself: a row still naming
+    // an object we have removed would send the download route looking for a file that is gone.
     await tx.execute({
-      sql: `UPDATE import_files SET student_id = NULL, status = 'deleted' WHERE student_id = ?`,
+      sql: `UPDATE import_files
+               SET student_id = NULL, status = 'deleted', stored_path = NULL
+             WHERE student_id = ?`,
       args: [studentId],
     });
 

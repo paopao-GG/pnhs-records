@@ -27,9 +27,16 @@ const scratchDir = mkdtempSync(join(tmpdir(), "pnhs-blob-"));
 const projectDir = process.cwd();
 if (!usingR2) process.chdir(scratchDir);
 
-const { blobKey, deleteOriginal, getOriginal, isBlobKey, normaliseKey, putOriginal } = await import(
-  "../lib/blob/store.ts"
-);
+const {
+  blobKey,
+  deleteOriginal,
+  getOriginal,
+  isBlobKey,
+  isUploadKey,
+  normaliseKey,
+  putOriginal,
+  uploadKey,
+} = await import("../lib/blob/store.ts");
 
 let passed = 0;
 const checks: { name: string; fn: () => Promise<void> }[] = [];
@@ -126,6 +133,54 @@ check("a malformed hash is rejected rather than stored unreadably", async () => 
   assert.throws(() => blobKey("not-a-hash", ".docx"));
   // putOriginal turns that into "not stored" - never into a failed import.
   assert.equal(await putOriginal("not-a-hash", ".docx", bytesOf("x")), null);
+});
+
+check("an upload key is unguessable and never lands in the archive", async () => {
+  /*
+   * The property that matters, and the one whose absence was the bug: nothing the caller says
+   * decides where their bytes go. When the key was the content hash the browser claimed, a
+   * signed-in caller could name an archived original and R2 would overwrite it - replacing the
+   * only reissuable copy of a learner's Form 137.
+   */
+  const seen = new Set<string>();
+  for (let i = 0; i < 200; i++) {
+    const key = uploadKey(".docx");
+    assert.ok(key.startsWith("uploads/"), key);
+    assert.ok(isBlobKey(key), key);
+    assert.ok(isUploadKey(key), key);
+    assert.equal(seen.has(key), false, "upload keys must not repeat");
+    seen.add(key);
+  }
+});
+
+check("an upload key survives any extension, like an archive key", async () => {
+  for (const ext of ["../../evil", "", ".", "..", ".DOCX", "xlsx", ".tar.gz", ".a/b", "?><"]) {
+    const key = uploadKey(ext);
+    assert.equal(isBlobKey(key), true, `must be valid for ext ${JSON.stringify(ext)}: ${key}`);
+    assert.ok(!key.includes(".."), key);
+  }
+});
+
+check("archive keys are not mistaken for uploads", async () => {
+  // The import route deletes the inbound copy after reading it. If this told it that an
+  // `originals/` key was an upload, that call would delete the archive instead.
+  assert.equal(isUploadKey(blobKey("a".repeat(64), ".docx")), false);
+  assert.equal(isUploadKey("uploads/" + "f".repeat(31) + ".docx"), false, "wrong length");
+  assert.equal(isUploadKey("uploads/../originals/x.docx"), false);
+});
+
+check("deleting removes the file from either backing", async () => {
+  // `deleteOriginal` used to return early unless a bucket was configured, so deleting a learner
+  // on a local install left their Form 137 - parents' names, home address - on disk.
+  const { key } = await store("a record the registrar deleted");
+  assert.ok(await getOriginal(key!), "should be there first");
+  await deleteOriginal(key!);
+  assert.equal(await getOriginal(key!), null, "the file must be gone after deleting it");
+});
+
+check("deleting something that is not ours does nothing", async () => {
+  await deleteOriginal("../../etc/passwd"); // must not throw, must not reach outside
+  await deleteOriginal(""); // must not throw
 });
 
 check("a stored file survives a second identical import", async () => {

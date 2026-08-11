@@ -60,10 +60,20 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
   const ext = original.stored_path.slice(original.stored_path.lastIndexOf(".")).toLowerCase();
 
+  /*
+   * The filename came off an uploaded file, so it is not ours to trust in a header.
+   *
+   * Everything outside printable ASCII goes, which covers the quotes and backslashes that would
+   * end the quoted string early and — the reason this is not cosmetic — the carriage returns
+   * and newlines that make Node throw ERR_INVALID_CHAR. That turns a download the registrar was
+   * waiting for into a 500, for a file that imported perfectly well.
+   */
+  const filename = basename(original.filename).replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "");
+
   return new Response(bytes as unknown as BodyInit, {
     headers: {
       "Content-Type": MIME[ext] ?? "application/octet-stream",
-      "Content-Disposition": `attachment; filename="${basename(original.filename).replace(/["\\]/g, "")}"`,
+      "Content-Disposition": `attachment; filename="${filename || "original"}"`,
       "Content-Length": String(bytes.byteLength),
       "Cache-Control": "no-store",
     },

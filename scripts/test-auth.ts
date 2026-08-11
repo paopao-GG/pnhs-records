@@ -79,7 +79,20 @@ check("the password policy rejects what it should", async () => {
   assert.ok(passwordProblem("aaaaaaaaaaaaaaaa"), "no variety");
   assert.ok(passwordProblem("pantao national high school"), "contains the school name");
   assert.ok(passwordProblem("registrar12345678", "registrar"), "contains the username");
+  assert.ok(passwordProblem("the admin sat down here"), "role name as a whole word");
   assert.equal(passwordProblem(PASSWORD, "registrar"), null, "a passphrase is fine");
+});
+
+check("the policy does not reject good passphrases for containing a role name", async () => {
+  // Matched as substrings, these were all refused. A rule that turns down good passwords is how
+  // people end up choosing worse ones.
+  for (const good of [
+    "the administrator sang badly",
+    "seven registrars queued outside",
+    "advisory boards meet monthly",
+  ]) {
+    assert.equal(passwordProblem(good), null, `should be allowed: ${good}`);
+  }
 });
 
 // ----------------------------------------------------------------- sessions

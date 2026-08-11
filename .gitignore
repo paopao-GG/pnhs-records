@@ -17,6 +17,6 @@ spike-output/
 .env
 .env.*
 !.env.example
-
+turso.txt
 # Database backups. Learner data, same rule as data/.
 backups/
