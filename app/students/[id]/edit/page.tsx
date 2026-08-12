@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { getStudent, getSubjectsForStudent, getTerms } from "@/lib/db/queries.ts";
 import { requireUser } from "@/lib/auth/current-user.ts";
 import { GradeEditor } from "@/app/_components/grade-editor.tsx";
+import { CachedNotice } from "@/app/_components/connection-state.tsx";
 
 export const dynamic = "force-dynamic";
 
@@ -34,9 +35,13 @@ export default async function EditStudentPage({ params }: { params: Promise<{ id
         </div>
       </div>
 
-      <div className="notice">
-        Enter quarterly ratings only. The printed SF10 recomputes final ratings and the general
-        average with its own formulas, so the form and this screen always agree.
+      <CachedNotice renderedAt={new Date().toISOString()} />
+
+      <div className="notice" data-tone="info">
+        Enter quarterly ratings only — the printed SF10 recomputes final ratings and the general
+        average with its own formulas, so the form and this screen always agree. Grades save
+        themselves as you type. <strong>Enter</strong> or <strong>↓</strong> moves down a column,
+        <strong> Tab</strong> moves across a row.
       </div>
 
       <GradeEditor student={student} bundles={bundles} />

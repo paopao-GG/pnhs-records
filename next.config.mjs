@@ -20,6 +20,16 @@ const nextConfig = {
   async headers() {
     return [
       {
+        /*
+         * The three self-hosted typefaces. Their filenames are stable and their contents never
+         * change, so anything short of a year is a round trip on the critical path of first
+         * paint for no benefit. `immutable` also stops a revalidation request being made at
+         * all, which matters on the school's connection.
+         */
+        source: "/fonts/:path*",
+        headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
+      },
+      {
         source: "/:path*",
         headers: [
           { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },

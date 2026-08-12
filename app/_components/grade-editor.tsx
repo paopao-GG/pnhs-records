@@ -132,7 +132,13 @@ export function GradeEditor({
                 </p>
               ) : (
                 <div className="table-scroll">
-                  <table className="ledger">
+                  {/*
+                   * Keyboard navigation is scoped to one term's table rather than the whole
+                   * page. Holding ArrowDown past the last subject of Grade 7 should stop, not
+                   * land silently in Grade 8 — a grade typed into the wrong year is exactly
+                   * the error this grid exists to prevent.
+                   */}
+                  <table className="ledger" data-encoding-grid>
                     <thead>
                       <tr>
                         <th className="subject">{isJhs ? "Learning Area" : "Subject"}</th>
@@ -153,13 +159,15 @@ export function GradeEditor({
                             <td className="subject">{s.subject_name}</td>
                             {(["q1", "q2", "q3", "q4"] as const)
                               .slice(0, isJhs ? 4 : 2)
-                              .map((q) => (
+                              .map((q, qi) => (
                                 <td className="num" key={q}>
                                   <GradeCell
                                     subjectId={s.id}
                                     field={q}
                                     initial={s[q]}
                                     label={`${s.subject_name} ${q.toUpperCase()}`}
+                                    row={i}
+                                    col={qi}
                                     onSaved={onSaved(s.id)}
                                     onStateChange={onStateChange}
                                   />
@@ -172,6 +180,8 @@ export function GradeEditor({
                                   field="final_rating"
                                   initial={s.final_rating}
                                   label={`${s.subject_name} final rating`}
+                                  row={i}
+                                  col={isJhs ? 4 : 2}
                                   onSaved={onSaved(s.id)}
                                   onStateChange={onStateChange}
                                 />

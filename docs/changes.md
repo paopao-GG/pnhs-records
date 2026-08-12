@@ -222,7 +222,16 @@ Needs #0.
 
 ---
 
-## 8. Offline editing with sync · ~4–6 weeks
+## 8. Offline editing with sync · ~4–6 weeks · **read-only half DONE, sync still open**
+
+> **The cheap column of the table below now exists** — service worker, cached records, a
+> permanent `Live`/`Cached` indicator, a freshness timestamp, and editing visibly disabled while
+> disconnected. That is the ~2–3 day insurance version, built alongside the frontend redesign
+> and covered by `npm run test:browser`. See production-design §5a.
+>
+> **Everything below this line — the outbox, per-row versioning, conflict resolution, offline
+> record creation — is still unbuilt and still gated on the same open question.** If the answer
+> is "insurance against downtime", it is already answered and this item is closed.
 
 The architectural change, and roughly three-quarters of this round on its own — everything else
 here totals about 13 days.

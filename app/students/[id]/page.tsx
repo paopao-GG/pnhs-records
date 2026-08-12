@@ -17,8 +17,10 @@ import {
 import { requireUser } from "@/lib/auth/current-user.ts";
 import { DeleteRecord } from "@/app/_components/delete-record.tsx";
 import { PrintPanel } from "@/app/_components/print-panel.tsx";
+import { Guilloche } from "@/app/_components/guilloche.tsx";
+import { Seal, type SealTone } from "@/app/_components/seal.tsx";
+import { CachedNotice } from "@/app/_components/connection-state.tsx";
 import { exactFinalRating, finalRating, generalAverage, isPassing } from "@/lib/grading.ts";
-import { jhsFinalRatingIsComputed } from "@/lib/sf10/jhs-map.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -67,6 +69,54 @@ function excelRoundForDisplay(n: number): number {
   return Math.sign(n) * Math.round(Math.abs(n));
 }
 
+/**
+ * A term's finals, its general average and whether it passed.
+ *
+ * Shared by the term plate and the rail seal so the two can never disagree — the seal is a
+ * claim about the record and must be derived from exactly the same numbers shown beneath it.
+ */
+function standing(term: TermRow, subjects: SubjectRow[]) {
+  const isJhs = term.level <= 10;
+  const resolved = subjects.map((s, i) => resolveFinal(s, i, isJhs));
+
+  // An imported record shows the general average its own form carried. Across the school's
+  // real files that figure was produced three different ways, so recomputing it would quietly
+  // disagree with the paper record. We only compute when nothing was stored.
+  const genAve =
+    term.general_average != null
+      ? excelRoundForDisplay(term.general_average)
+      : generalAverage(
+          resolved.map((r) => r.exact),
+          isJhs ? "jhs" : "shs",
+        );
+
+  return { isJhs, finals: resolved.map((r) => r.display), genAve, passing: isPassing(genAve) };
+}
+
+/**
+ * The promotion mark for a term — the words, the tone, and whether the term plate shows one.
+ *
+ * One function because this page renders the same claim twice: as the stamp on the term plate
+ * and as the seal in the rail. Two copies of the rule drift, and they drifted immediately — the
+ * plate said "Incomplete" while the seal said "Not stated" about the same term. A permanent
+ * record that describes itself two ways on one screen is a record nobody should trust.
+ */
+function promotionMark(
+  term: TermRow,
+  passing: boolean | null,
+): { text: string; tone: SealTone; onPlate: boolean } {
+  const tone: SealTone = passing === null ? "none" : passing ? "pass" : "fail";
+
+  if (term.promotion_remark) return { text: term.promotion_remark, tone, onPlate: true };
+
+  // Old records carry Action Taken per subject rather than a promotion remark for the year, so
+  // there is nothing to state and the plate shows no stamp at all. The seal still needs words,
+  // and says what the record is instead of inventing a decision nobody recorded.
+  if (term.curriculum === "old") return { text: "Archive copy", tone: "none", onPlate: false };
+
+  return { text: "Incomplete", tone, onPlate: true };
+}
+
 function Grade({ value }: { value: number | null }) {
   if (value == null) return <span className="muted">—</span>;
   return <span className={isPassing(value) ? undefined : "grade-fail"}>{value}</span>;
@@ -78,8 +128,8 @@ function Attendance({ rows }: { rows: AttendanceRow[] }) {
     rows.reduce((n, r) => n + (pick(r) ?? 0), 0);
 
   return (
-    <div style={{ marginTop: 18 }}>
-      <div className="eyebrow" style={{ marginBottom: 8 }}>
+    <div style={{ marginTop: 20 }}>
+      <div className="eyebrow" style={{ marginBottom: 9 }}>
         Attendance
       </div>
       <div className="table-scroll">
@@ -131,38 +181,23 @@ function TermCard({
   attendance: AttendanceRow[];
 }) {
   const isOld = term.curriculum === "old";
-  const isJhs = term.level <= 10;
   const showUnits = subjects.some((s) => s.units_earned != null);
-  const resolved = subjects.map((s, i) => resolveFinal(s, i, isJhs));
-  const finals = resolved.map((r) => r.display);
-
-  // An imported record shows the general average its own form carried. Across the school's
-  // real files that figure was produced three different ways, so recomputing it would quietly
-  // disagree with the paper record. We only compute when nothing was stored.
-  const genAve =
-    term.general_average != null
-      ? excelRoundForDisplay(term.general_average)
-      : generalAverage(
-          resolved.map((r) => r.exact),
-          isJhs ? "jhs" : "shs",
-        );
-  const passing = isPassing(genAve);
+  const { isJhs, finals, genAve, passing } = standing(term, subjects);
+  const mark = promotionMark(term, passing);
 
   return (
-    // Capped so a learner with six years of records does not crawl in one card at a time.
+    // Capped so a learner with six years of records does not crawl in one plate at a time.
     <section className="card" style={{ animationDelay: `${Math.min(index, 5) * 55}ms` }}>
       <div className="card-head">
         <h3>{termLabel(term)}</h3>
         {term.section && <span className="chip">{term.section}</span>}
-        <span className="muted mono" style={{ fontSize: 13 }}>
+        <span className="muted mono" style={{ fontSize: 12.5 }}>
           {term.school_year ?? "—"}
         </span>
         <div className="spacer" />
-        {/* Old records carry Action Taken per subject rather than a promotion remark for the
-            year, so a stamp is only shown when the document actually has one. */}
-        {(term.promotion_remark || !isOld) && (
-          <span className="stamp" data-tone={passing === null ? "none" : passing ? "pass" : "fail"}>
-            {term.promotion_remark ?? "Incomplete"}
+        {mark.onPlate && (
+          <span className="stamp" data-tone={mark.tone}>
+            {mark.text}
           </span>
         )}
       </div>
@@ -302,76 +337,47 @@ export default async function StudentPage({ params }: { params: Promise<{ id: st
     .filter(Boolean)
     .join(", ");
 
+  /*
+   * The rail seal states the record's current standing — the latest term's mark, computed by
+   * the same function the term plate uses so the two cannot say different things.
+   */
+  const latest = terms.length > 0 ? terms[terms.length - 1] : null;
+  const latestStanding = latest ? standing(latest, subjectsByTerm.get(latest.id) ?? []) : null;
+  const sealMark: { text: string; tone: SealTone } = latest
+    ? promotionMark(latest, latestStanding?.passing ?? null)
+    : { text: "No terms", tone: "none" };
+
   return (
-    <main className="page">
-      <div className="page-head">
+    <main className="page" data-layout="record">
+      <aside className="rail">
         <div>
           <div className="eyebrow">
             <Link href="/">← All records</Link>
           </div>
-          <h2>
+          <h2 className="rail-name">
             {student.last_name}, {given}
           </h2>
+          {/* Never show a generated marker as if it were the learner's number. Form 137
+              records predate the LRN system, so there is nothing real to show. */}
+          {/* Labelled, because a bare twelve-digit number on a permanent record could be read
+              as several other things. */}
+          <div className="rail-lrn">
+            <span className="eyebrow">LRN </span>
+            {student.lrn_placeholder ? "No LRN · pre-2011 record" : student.lrn}
+          </div>
         </div>
-        <div className="spacer" />
-        <div className="btn-row">
-          <Link className="btn" href={`/students/${studentId}/edit`}>
-            Edit record
-          </Link>
-          {original && (
-            <a className="btn" href={`/api/students/${studentId}/original`}>
-              Download original
-            </a>
-          )}
-          <PrintPanel studentId={studentId} forms={forms} levelsByForm={levelsByForm} />
-        </div>
-      </div>
 
-      {isOldRecord && (
-        <div className="notice">
-          <strong>Pre-K-12 record (Form 137).</strong> This learner studied the old secondary
-          curriculum, so their years are named as the original document names them. The record
-          cannot be reissued on a modern SF10 — that would state a curriculum they never took.
-          {original ? " Use Download original instead." : ""}
-        </div>
-      )}
-
-      {issueCount > 0 && (
-        <div className="notice">
-          <strong>
-            {issueCount} {issueCount === 1 ? "item" : "items"} on this record need checking
-          </strong>{" "}
-          against the original form.{" "}
-          <Link href="/import/review">Review →</Link>
-        </div>
-      )}
-
-      <section className="card">
-        <div className="card-head">
-          <h3>Learner Information</h3>
-        </div>
-        <div className="card-body">
+        <section className="card">
+          <Guilloche />
+          <div className="seal-plate">
+            <Seal
+              remark={sealMark.text}
+              tone={sealMark.tone}
+              rim={latest?.school_year ?? null}
+              caption={latest ? termLabel(latest).toUpperCase() : null}
+            />
+          </div>
           <dl className="fields">
-            <div className="field">
-              <dt>LRN</dt>
-              {/* Never show a generated marker as if it were the learner's number. Form 137
-                  records predate the LRN system, so there is nothing real to show. */}
-              <dd className={student.lrn_placeholder ? "muted" : "mono"}>
-                {student.lrn_placeholder ? "No LRN · pre-2011 record" : student.lrn}
-              </dd>
-            </div>
-            <div className="field">
-              <dt>Last Name</dt>
-              <dd>{student.last_name}</dd>
-            </div>
-            <div className="field">
-              <dt>First Name</dt>
-              <dd>{student.first_name}</dd>
-            </div>
-            <div className="field">
-              <dt>Middle Name</dt>
-              <dd>{student.middle_name ?? ""}</dd>
-            </div>
             <div className="field">
               <dt>Sex</dt>
               <dd>{student.sex === "M" ? "Male" : student.sex === "F" ? "Female" : ""}</dd>
@@ -405,39 +411,75 @@ export default async function StudentPage({ params }: { params: Promise<{ id: st
               </div>
             )}
           </dl>
+        </section>
+
+        <div className="btn-row">
+          <Link className="btn" data-variant="primary" href={`/students/${studentId}/edit`}>
+            Edit record
+          </Link>
+          {original && (
+            <a className="btn" href={`/api/students/${studentId}/original`}>
+              Download original
+            </a>
+          )}
+          <PrintPanel studentId={studentId} forms={forms} levelsByForm={levelsByForm} />
         </div>
-      </section>
+      </aside>
 
-      <div className="eyebrow" style={{ margin: "30px 0 12px" }}>
-        Scholastic Record
-      </div>
+      <div className="rail-body">
+        {/* Stamped as the server builds the page. If this HTML later comes back out of the
+            service worker's cache, that is the moment the copy was taken. */}
+        <CachedNotice renderedAt={new Date().toISOString()} />
 
-      {terms.length === 0 ? (
-        <div className="card">
-          <div className="empty">No enrolment terms recorded yet.</div>
+        {isOldRecord && (
+          <div className="notice">
+            <strong>Pre-K-12 record (Form 137).</strong> This learner studied the old secondary
+            curriculum, so their years are named as the original document names them. The record
+            cannot be reissued on a modern SF10 — that would state a curriculum they never took.
+            {original ? " Use Download original instead." : ""}
+          </div>
+        )}
+
+        {issueCount > 0 && (
+          <div className="notice">
+            <strong>
+              {issueCount} {issueCount === 1 ? "item" : "items"} on this record need checking
+            </strong>{" "}
+            against the original form. <Link href="/import/review">Review →</Link>
+          </div>
+        )}
+
+        <div className="eyebrow" style={{ margin: "2px 0 14px" }}>
+          Scholastic Record
         </div>
-      ) : (
-        terms.map((t, i) => (
-          <TermCard
-            key={t.id}
-            term={t}
-            index={i}
-            subjects={subjectsByTerm.get(t.id) ?? []}
-            attendance={t.curriculum === "old" ? (attendanceByTerm.get(t.id) ?? []) : []}
-          />
-        ))
-      )}
 
-      <DeleteRecord
-        studentId={studentId}
-        lrn={student.lrn}
-        name={`${student.last_name}, ${given}`}
-        summary={deletionSummary}
-      />
+        {terms.length === 0 ? (
+          <div className="card">
+            <div className="empty">No enrolment terms recorded yet.</div>
+          </div>
+        ) : (
+          terms.map((t, i) => (
+            <TermCard
+              key={t.id}
+              term={t}
+              index={i}
+              subjects={subjectsByTerm.get(t.id) ?? []}
+              attendance={t.curriculum === "old" ? (attendanceByTerm.get(t.id) ?? []) : []}
+            />
+          ))
+        )}
 
-      <div className="foot">
-        <span>Pantao National High School · School ID 301860</span>
-        <span>Printed forms are generated from the school&rsquo;s official SF10 template</span>
+        <DeleteRecord
+          studentId={studentId}
+          lrn={student.lrn}
+          name={`${student.last_name}, ${given}`}
+          summary={deletionSummary}
+        />
+
+        <div className="foot">
+          <span>Pantao National High School · School ID 301860</span>
+          <span>Printed forms are generated from the school&rsquo;s official SF10 template</span>
+        </div>
       </div>
     </main>
   );

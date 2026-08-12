@@ -1,64 +1,217 @@
 /*
- * PNHS Records - design system.
+ * PNHS Records — "Engraved Registry" design system.
  *
- * Aesthetic: official record-keeping. Manila-paper warmth, hairline ledger rules, typewriter
- * numerals, rubber-stamp status marks. It should feel like the filing room it replaces, not
- * like a startup dashboard.
+ * The premise: this app should look like the security document it produces, not like the
+ * filing cabinet it replaced. Engraved-plate typography, guilloche watermark, a struck seal
+ * instead of a rubber stamp, and a grade grid that reads as a printed ledger plate but
+ * behaves like a spreadsheet.
  *
- * Every font is already present on Windows, so the app renders correctly with no network -
- * which matters because this runs offline on the registrar's PC.
+ * Two rules constrain every choice here:
+ *
+ * 1. NOTHING IS FETCHED AT RUNTIME. Fonts are self-hosted in /public/fonts and textures are
+ *    inline data URIs. The app has to render identically with no network, because offline is
+ *    a feature and not an accident.
+ * 2. NUMBERS WIN. Wherever a grade, an LRN or a count is shown, legibility and tabular
+ *    alignment beat every other consideration. The registrar reads this grid for hours.
  */
 
-:root {
-  --font-display: Constantia, Cambria, Georgia, "Times New Roman", serif;
-  --font-ui: Corbel, "Segoe UI", Candara, system-ui, sans-serif;
-  --font-mono: Consolas, "Cascadia Mono", "Courier New", monospace;
+/* ==========================================================================
+   1. Typefaces
+   ========================================================================== */
 
-  --paper: #f7f4ec;
-  --paper-raised: #fffdf8;
-  --paper-sunken: #efeade;
-
-  --ink: #1b2230;
-  --ink-soft: #4c586b;
-  --ink-faint: #8a93a2;
-
-  --rule: #ddd6c6;
-  --rule-strong: #bdb4a0;
-
-  --official: #1b3f8f;
-  --official-tint: #e9eefa;
-  --seal: #9a2b2b;
-  --seal-tint: #fbeeed;
-  --pass: #1d6440;
-  --gold: #bf911d;
-
-  --shadow-card: 0 1px 2px rgba(27, 34, 48, 0.05), 0 8px 24px -12px rgba(27, 34, 48, 0.18);
-  --radius: 3px;
+/*
+ * Fraunces — display. A variable face with an optical-size axis, which is what gives headings
+ * their engraved weight at large sizes without turning spindly at small ones. Latin subset.
+ */
+@font-face {
+  font-family: "Fraunces";
+  font-style: normal;
+  font-weight: 300 800;
+  font-display: swap;
+  src: url("/fonts/fraunces-var-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
 }
 
+/*
+ * Atkinson Hyperlegible — every word of UI text. Drawn by the Braille Institute to keep
+ * characters distinguishable for low-vision readers, which is not a niche concern in an
+ * office where staff read names and six-digit numbers all day.
+ */
+@font-face {
+  font-family: "Atkinson";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/atkinson-400-latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Atkinson";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/atkinson-700-latin.woff2") format("woff2");
+}
+
+/* IBM Plex Mono — grades, LRNs, dates, counts. Tabular by default, see --font-mono use. */
+@font-face {
+  font-family: "Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/plexmono-400-latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/plexmono-500-latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Plex Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/plexmono-600-latin.woff2") format("woff2");
+}
+
+/*
+ * Metric-matched fallbacks, so the swap from local font to webfont does not reflow the page.
+ *
+ * The size-adjust values are eyeball-tuned against the real faces rather than computed from
+ * metrics tables — close enough that a swap is not visible, not close enough to be called
+ * exact. Atkinson runs wider than Segoe UI; Plex Mono runs marginally narrower than Consolas.
+ */
+@font-face {
+  font-family: "Atkinson Fallback";
+  src: local("Segoe UI"), local("Verdana");
+  size-adjust: 104%;
+  ascent-override: 92%;
+  descent-override: 24%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: "Plex Fallback";
+  src: local("Consolas"), local("Courier New");
+  size-adjust: 98%;
+}
+
+/* ==========================================================================
+   2. Tokens
+   ========================================================================== */
+
+:root {
+  --font-display: "Fraunces", Constantia, Cambria, Georgia, serif;
+  --font-ui: "Atkinson", "Atkinson Fallback", Corbel, "Segoe UI", sans-serif;
+  --font-mono: "Plex Mono", "Plex Fallback", Consolas, "Courier New", monospace;
+
+  /* --- Ground. Cool oyster rather than warm manila: this is a plate, not a folder. --- */
+  --ground: #eceae4;
+  --plate: #f8f7f4;
+  --plate-2: #f1efe9;
+  --recess: #e2e0d8;
+
+  --ink: #14181c;
+  --ink-2: #4a5359;
+  --ink-3: #838b90;
+
+  /*
+   * Two accents carry the entire palette. Verdigris is every affirmative and navigational
+   * state; brass is every pending, imported or advisory state. Vermilion appears ONLY for
+   * destruction and failing marks — that scarcity is the whole reason it reads as a warning.
+   */
+  --verdigris: #17564f;
+  --verdigris-tint: #e2ebe8;
+  --verdigris-edge: #2c7d72;
+  --brass: #8a6318;
+  --brass-tint: #f2ead6;
+  --vermilion: #9c2b1d;
+  --vermilion-tint: #f6e6e2;
+
+  --rule: #d9d6cc;
+  --rule-2: #b3aea0;
+
+  /*
+   * Plates sit on the ground with a hairline and the barest lift. An engraved plate is not a
+   * floating card — the shadow states "resting on", never "hovering above".
+   */
+  --shadow-plate: 0 1px 0 rgba(20, 24, 28, 0.04), 0 1px 3px -1px rgba(20, 24, 28, 0.1);
+  --shadow-lift: 0 2px 4px -2px rgba(20, 24, 28, 0.16), 0 12px 28px -18px rgba(20, 24, 28, 0.4);
+  --shadow-inset: inset 0 1px 2px rgba(20, 24, 28, 0.07);
+
+  --radius: 2px;
+  --rail: 300px;
+  --measure: 1320px;
+}
+
+/*
+ * "After hours." A full palette, not a filter over the light one — the accents lighten and
+ * desaturate because a dark ground makes saturated colour shout.
+ */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --paper: #14171d;
-    --paper-raised: #1c2029;
-    --paper-sunken: #101318;
+  :root:not([data-theme="light"]) {
+    --ground: #0d1114;
+    --plate: #141a1e;
+    --plate-2: #192025;
+    --recess: #0a0e10;
 
-    --ink: #e9e4d8;
-    --ink-soft: #a6adba;
-    --ink-faint: #6f7887;
+    --ink: #e6e3da;
+    --ink-2: #98a1a6;
+    --ink-3: #6a7378;
 
-    --rule: #2c323d;
-    --rule-strong: #3e4552;
+    --verdigris: #5fbfae;
+    --verdigris-tint: #14282a;
+    --verdigris-edge: #7ed4c3;
+    --brass: #d3a444;
+    --brass-tint: #241f13;
+    --vermilion: #e0736a;
+    --vermilion-tint: #2a1614;
 
-    --official: #7ba1f0;
-    --official-tint: #1a2437;
-    --seal: #e08585;
-    --seal-tint: #2c1d1e;
-    --pass: #6dbd8f;
-    --gold: #d9ad4a;
+    --rule: #262f35;
+    --rule-2: #3a464d;
 
-    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+    --shadow-plate: 0 1px 0 rgba(0, 0, 0, 0.4), 0 1px 3px -1px rgba(0, 0, 0, 0.6);
+    --shadow-lift: 0 2px 4px -2px rgba(0, 0, 0, 0.5), 0 12px 28px -18px rgba(0, 0, 0, 0.9);
+    --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.5);
   }
 }
+
+/* Explicit override wins in both directions, for a future in-app toggle. */
+:root[data-theme="dark"] {
+  --ground: #0d1114;
+  --plate: #141a1e;
+  --plate-2: #192025;
+  --recess: #0a0e10;
+
+  --ink: #e6e3da;
+  --ink-2: #98a1a6;
+  --ink-3: #6a7378;
+
+  --verdigris: #5fbfae;
+  --verdigris-tint: #14282a;
+  --verdigris-edge: #7ed4c3;
+  --brass: #d3a444;
+  --brass-tint: #241f13;
+  --vermilion: #e0736a;
+  --vermilion-tint: #2a1614;
+
+  --rule: #262f35;
+  --rule-2: #3a464d;
+
+  --shadow-plate: 0 1px 0 rgba(0, 0, 0, 0.4), 0 1px 3px -1px rgba(0, 0, 0, 0.6);
+  --shadow-lift: 0 2px 4px -2px rgba(0, 0, 0, 0.5), 0 12px 28px -18px rgba(0, 0, 0, 0.9);
+  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+/* ==========================================================================
+   3. Base
+   ========================================================================== */
 
 *,
 *::before,
@@ -76,24 +229,28 @@ body {
   font-size: 15px;
   line-height: 1.5;
   color: var(--ink);
-  background-color: var(--paper);
-  /* Faint paper grain. Inline SVG so nothing is fetched over the network. */
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.028'/%3E%3C/svg%3E");
+  background-color: var(--ground);
+  /* Intaglio grain. Inline so nothing is fetched — see the rule at the top of this file. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23g)' opacity='0.022'/%3E%3C/svg%3E");
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 h1,
 h2,
-h3 {
+h3,
+h4 {
   font-family: var(--font-display);
   font-weight: 600;
-  letter-spacing: -0.01em;
+  /* Optical size tracks the rendered size; without it Fraunces goes spidery in headings. */
+  font-variation-settings: "opsz" 36;
+  letter-spacing: -0.012em;
   margin: 0;
 }
 
 a {
-  color: var(--official);
-  text-decoration-color: color-mix(in srgb, var(--official) 35%, transparent);
+  color: var(--verdigris);
+  text-decoration-color: color-mix(in srgb, var(--verdigris) 32%, transparent);
   text-underline-offset: 2px;
 }
 
@@ -101,89 +258,193 @@ a:hover {
   text-decoration-color: currentColor;
 }
 
-/* ---------------------------------------------------------------- masthead */
+:focus-visible {
+  outline: 2px solid var(--verdigris-edge);
+  outline-offset: 2px;
+}
+
+/* ==========================================================================
+   4. Masthead
+   ========================================================================== */
 
 .masthead {
-  border-bottom: 1px solid var(--rule);
-  background: var(--paper-raised);
+  background: var(--plate);
+  border-bottom: 1px solid var(--rule-2);
   position: sticky;
   top: 0;
   z-index: 20;
 }
 
-/* Philippine flag colours as an institutional hairline. */
-.masthead::before {
+/*
+ * The engraver's double rule: a heavy line and a hairline with air between them. It appears
+ * three times in this system — under the masthead, under a ledger head, above a ledger foot —
+ * and it is the single most repeated signal that this is a printed instrument.
+ */
+.masthead::after {
   content: "";
   display: block;
   height: 3px;
-  background: linear-gradient(
-    to right,
-    var(--official) 0 33.33%,
-    var(--seal) 33.33% 66.66%,
-    var(--gold) 66.66% 100%
-  );
+  border-top: 1px solid var(--rule);
+  background: transparent;
 }
 
 .masthead-inner {
-  max-width: 1180px;
+  max-width: var(--measure);
   margin: 0 auto;
-  padding: 14px 24px;
+  padding: 13px 28px;
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 15px;
 }
 
+/* Institutional identity, engraved rather than drawn. */
 .seal {
-  width: 38px;
-  height: 38px;
+  width: 42px;
+  height: 42px;
   flex: none;
-  border: 1.5px solid var(--official);
-  border-radius: 50%;
+  position: relative;
   display: grid;
   place-items: center;
+  border: 1px solid var(--verdigris);
+  border-radius: 50%;
+  color: var(--verdigris);
   font-family: var(--font-display);
+  font-variation-settings: "opsz" 12;
   font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.02em;
-  color: var(--official);
+  letter-spacing: 0.04em;
+}
+
+/* The inner keyline. Two concentric rules is what separates a seal from a circle. */
+.seal::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border: 1px solid color-mix(in srgb, var(--verdigris) 35%, transparent);
+  border-radius: 50%;
 }
 
 .masthead h1 {
-  font-size: 16px;
-  line-height: 1.2;
+  font-size: 16.5px;
+  font-variation-settings: "opsz" 18;
+  line-height: 1.15;
 }
 
 .masthead .sub {
-  font-size: 11.5px;
-  color: var(--ink-faint);
-  letter-spacing: 0.09em;
+  font-size: 11px;
+  color: var(--ink-3);
+  letter-spacing: 0.12em;
   text-transform: uppercase;
+  margin-top: 1px;
 }
 
 .masthead nav {
   margin-left: auto;
   display: flex;
+  align-items: center;
   gap: 4px;
 }
 
-/* ------------------------------------------------------------------ layout */
+.masthead nav form {
+  display: inline-flex;
+}
+
+/* Who is signed in. */
+.who {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.2;
+  margin-left: 8px;
+  padding-left: 15px;
+  border-left: 1px solid var(--rule);
+  font-size: 12.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.who-role {
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* ==========================================================================
+   5. Page layout
+   ========================================================================== */
 
 .page {
-  max-width: 1180px;
+  max-width: var(--measure);
   margin: 0 auto;
-  padding: 32px 24px 96px;
+  padding: 34px 28px 110px;
+}
+
+/* The record page: a sticky identity rail beside the scholastic plates. */
+.page[data-layout="record"] {
+  display: grid;
+  grid-template-columns: var(--rail) minmax(0, 1fr);
+  gap: 34px;
+  align-items: start;
+}
+
+.rail {
+  position: sticky;
+  top: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.rail-body {
+  min-width: 0;
+}
+
+/*
+ * The learner's name is the title of the document, so it is set at display size in the rail
+ * rather than in a page head above both columns. That is the whole point of the two-column
+ * composition — identity stays fixed on screen while six years of terms scroll past it.
+ */
+.rail-name {
+  font-size: 26px;
+  font-variation-settings: "opsz" 40;
+  line-height: 1.12;
+  margin: 6px 0 0;
+  /* Filipino surnames plus four given names get long; break rather than overflow the rail. */
+  overflow-wrap: break-word;
+}
+
+.rail-lrn {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+  margin-top: 5px;
+}
+
+@media (max-width: 1080px) {
+  .page[data-layout="record"] {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 22px;
+  }
+
+  .rail {
+    position: static;
+  }
 }
 
 .page-head {
   display: flex;
   align-items: flex-end;
-  gap: 20px;
+  gap: 22px;
   flex-wrap: wrap;
-  margin-bottom: 24px;
+  margin-bottom: 26px;
 }
 
 .page-head h2 {
-  font-size: 27px;
+  font-size: 31px;
+  font-variation-settings: "opsz" 48;
+  line-height: 1.1;
 }
 
 .spacer {
@@ -191,37 +452,57 @@ a:hover {
 }
 
 .eyebrow {
-  font-size: 11px;
-  letter-spacing: 0.14em;
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--ink-faint);
-  font-weight: 600;
+  color: var(--ink-3);
+  font-weight: 700;
 }
 
 .muted {
-  color: var(--ink-soft);
+  color: var(--ink-2);
 }
 
 .mono {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+  font-feature-settings: "zero" 1;
 }
 
-/* ------------------------------------------------------------------- cards */
+/* ==========================================================================
+   6. Plates
+   ========================================================================== */
 
 .card {
-  background: var(--paper-raised);
+  position: relative;
+  background: var(--plate);
   border: 1px solid var(--rule);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-card);
-  margin-bottom: 22px;
-  animation: rise 0.4s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+  box-shadow: var(--shadow-plate);
+  margin-bottom: 20px;
+  animation: plate-rise 0.45s cubic-bezier(0.2, 0.75, 0.3, 1) backwards;
 }
 
-@keyframes rise {
+/*
+ * The controlled grid break: a term plate reaches a few pixels left of its column at the top
+ * rule, so a column of them reads as layered documents rather than stacked boxes. Suppressed
+ * below the two-column breakpoint, where there is no gutter to reach into.
+ */
+@media (min-width: 1081px) {
+  .rail-body .card::before {
+    content: "";
+    position: absolute;
+    top: -1px;
+    left: -14px;
+    width: 14px;
+    border-top: 1px solid var(--rule-2);
+  }
+}
+
+@keyframes plate-rise {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(10px);
   }
 }
 
@@ -230,65 +511,130 @@ a:hover {
   align-items: center;
   gap: 14px;
   flex-wrap: wrap;
-  padding: 13px 18px;
-  border-bottom: 1px solid var(--rule);
-  background: linear-gradient(var(--paper-sunken), transparent);
+  padding: 12px 18px;
+  background: var(--plate-2);
+  /* Double rule, as under the masthead. */
+  border-bottom: 1px solid var(--rule-2);
+  box-shadow: 0 3px 0 -2px var(--rule);
 }
 
 .card-head h3 {
-  font-size: 16px;
+  font-size: 17px;
+  font-variation-settings: "opsz" 20;
 }
 
 .card-body {
   padding: 18px;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .card {
-    animation: none;
+.card[data-tone="quiet"] .card-head {
+  background: transparent;
+}
+
+/* ==========================================================================
+   7. Guilloche watermark
+   ========================================================================== */
+
+/*
+ * Sits behind the learner-identity plate. Rendered as inline SVG by <Guilloche/> rather than
+ * a background image, so it can be sized to its plate and needs no data URI the size of a
+ * paragraph. Pointer-events off — it is decoration and must never eat a click.
+ */
+.guilloche {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: var(--radius);
+  color: var(--verdigris);
+  opacity: 0.05;
+  animation: guilloche-in 1.4s ease-out backwards;
+}
+
+/* Anything sharing a plate with the watermark has to be lifted over it explicitly. */
+.card > *:not(.guilloche) {
+  position: relative;
+  z-index: 1;
+}
+
+.guilloche svg {
+  position: absolute;
+  top: 50%;
+  right: -60px;
+  transform: translateY(-50%);
+  width: 380px;
+  height: 380px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .guilloche {
+    opacity: 0.09;
   }
 }
 
-/* ------------------------------------------------------------- definitions */
+@keyframes guilloche-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ==========================================================================
+   8. Definition fields
+   ========================================================================== */
 
 /*
- * Ruled with per-cell borders rather than a 1px grid gap over a coloured background: when
- * the last row is not full, the gap technique leaves a bare block of rule colour.
+ * Per-cell borders rather than a 1px grid gap over a coloured background: when the last row
+ * is short, the gap technique leaves a bare block of rule colour where a cell should be.
  */
 .fields {
+  position: relative;
+  /* A <dl> carries a 1em block margin by default. Harmless inside a padded card body, a
+     visible dead band when the list is a direct child of a plate, as it is in the rail. */
+  margin: 0;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  background: var(--paper-raised);
   border: 1px solid var(--rule);
   border-radius: var(--radius);
   overflow: hidden;
 }
 
 .field {
-  padding: 9px 13px;
+  padding: 9px 14px;
   border-right: 1px solid var(--rule);
   border-bottom: 1px solid var(--rule);
 }
 
 .field dt {
-  font-size: 10.5px;
-  letter-spacing: 0.1em;
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--ink-faint);
-  font-weight: 600;
+  color: var(--ink-3);
+  font-weight: 700;
 }
 
 .field dd {
-  margin: 2px 0 0;
+  margin: 3px 0 0;
   font-size: 15px;
 }
 
 .field dd:empty::after {
   content: "—";
-  color: var(--ink-faint);
+  color: var(--ink-3);
 }
 
-/* ------------------------------------------------------------------ tables */
+/* The rail's identity block reads as a stacked list, not a grid. */
+.rail .fields {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.rail .field {
+  border-right: none;
+}
+
+/* ==========================================================================
+   9. The ledger
+   ========================================================================== */
 
 .ledger {
   width: 100%;
@@ -297,19 +643,21 @@ a:hover {
 }
 
 .ledger th {
-  font-size: 10.5px;
-  letter-spacing: 0.1em;
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--ink-faint);
-  font-weight: 600;
+  color: var(--ink-3);
+  font-weight: 700;
   text-align: left;
-  padding: 7px 10px;
-  border-bottom: 1.5px solid var(--rule-strong);
+  padding: 8px 10px;
+  /* Double rule under the head — the engraving convention, third appearance. */
+  border-bottom: 1px solid var(--rule-2);
+  box-shadow: 0 3px 0 -2px var(--rule);
   white-space: nowrap;
 }
 
 .ledger td {
-  padding: 6px 10px;
+  padding: 7px 10px;
   border-bottom: 1px solid var(--rule);
 }
 
@@ -317,8 +665,21 @@ a:hover {
   border-bottom: none;
 }
 
+/*
+ * Row hover is a verdigris tick against the leading edge, not a fill. A fill across a grid of
+ * numbers is noise; a tick says "this row" without touching a single digit's contrast.
+ */
+.ledger tbody tr td:first-child {
+  box-shadow: inset 2px 0 0 -2px transparent;
+  transition: box-shadow 0.12s;
+}
+
+.ledger tbody tr:hover td:first-child {
+  box-shadow: inset 2px 0 0 0 var(--verdigris);
+}
+
 .ledger tbody tr:hover td {
-  background: var(--official-tint);
+  background: color-mix(in srgb, var(--verdigris) 4%, transparent);
 }
 
 .ledger .num {
@@ -337,29 +698,30 @@ a:hover {
   font-variant-numeric: tabular-nums;
   text-align: center;
   width: 64px;
-  font-weight: 700;
-  background: var(--paper-sunken);
+  font-weight: 600;
+  background: var(--recess);
 }
 
 .ledger tfoot td {
-  border-top: 1.5px solid var(--rule-strong);
-  padding: 9px 10px;
-  font-weight: 600;
+  border-top: 1px solid var(--rule-2);
+  box-shadow: 0 -3px 0 -2px var(--rule);
+  padding: 10px;
+  font-weight: 700;
 }
 
 .grade-fail {
-  color: var(--seal);
+  color: var(--vermilion);
   font-weight: 700;
 }
 
 .cat-tag {
-  font-size: 10px;
-  letter-spacing: 0.07em;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--ink-faint);
-  border: 1px solid var(--rule-strong);
-  border-radius: 2px;
-  padding: 1px 5px;
+  color: var(--ink-3);
+  border: 1px solid var(--rule-2);
+  border-radius: 1px;
+  padding: 2px 6px;
   white-space: nowrap;
 }
 
@@ -367,71 +729,152 @@ a:hover {
   overflow-x: auto;
 }
 
-/* ------------------------------------------------------------------ stamps */
+/* ==========================================================================
+   10. The struck seal, chips
+   ========================================================================== */
 
 /*
- * The memorable detail: promotion status reads as a rubber stamp pressed onto the record.
+ * Promotion status. Debossed into the plate in light mode, embossed out of it in dark — the
+ * light direction flips because a press leaves an impression in paper and a highlight in
+ * anything backlit.
  */
 .stamp {
+  position: relative;
   font-family: var(--font-display);
-  font-size: 12.5px;
+  font-variation-settings: "opsz" 11;
+  font-size: 11.5px;
   font-weight: 700;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
-  padding: 4px 11px;
-  border: 2px solid currentColor;
-  border-radius: 2px;
-  transform: rotate(-1.6deg);
-  opacity: 0.86;
+  padding: 5px 13px;
+  border: 1.5px solid currentColor;
+  border-radius: 1px;
+  color: var(--verdigris);
+  background: color-mix(in srgb, var(--verdigris) 7%, transparent);
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--verdigris) 22%, transparent);
+  transform: rotate(-1.4deg);
   white-space: nowrap;
-  color: var(--pass);
+  animation: strike 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) backwards;
+  animation-delay: 0.25s;
 }
 
 .stamp[data-tone="fail"] {
-  color: var(--seal);
+  color: var(--vermilion);
+  background: color-mix(in srgb, var(--vermilion) 7%, transparent);
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--vermilion) 22%, transparent);
 }
 
 .stamp[data-tone="none"] {
-  color: var(--ink-faint);
+  color: var(--ink-3);
   border-style: dashed;
-  opacity: 0.7;
+  background: transparent;
+  box-shadow: none;
+}
+
+.stamp[data-tone="pending"] {
+  color: var(--brass);
+  background: color-mix(in srgb, var(--brass) 8%, transparent);
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--brass) 22%, transparent);
+}
+
+/* The press: overshoot, then settle onto its final angle. Fires once, on load. */
+@keyframes strike {
+  from {
+    opacity: 0;
+    transform: rotate(-5deg) scale(1.09);
+  }
+}
+
+/* The round seal used on the record rail, drawn by <Seal/>. */
+.seal-plate {
+  display: grid;
+  place-items: center;
+  padding: 20px 0 6px;
+}
+
+.seal-mark {
+  width: 132px;
+  height: 132px;
+  color: var(--verdigris);
+  animation: strike 0.55s cubic-bezier(0.2, 1.4, 0.4, 1) backwards;
+  animation-delay: 0.3s;
+}
+
+.seal-mark[data-tone="fail"] {
+  color: var(--vermilion);
+}
+
+.seal-mark[data-tone="none"] {
+  color: var(--ink-3);
+}
+
+.seal-mark[data-tone="pending"] {
+  color: var(--brass);
 }
 
 .chip {
-  font-size: 11px;
-  letter-spacing: 0.08em;
+  font-size: 10.5px;
+  letter-spacing: 0.11em;
   text-transform: uppercase;
-  font-weight: 600;
+  font-weight: 700;
   padding: 3px 9px;
-  border-radius: 999px;
-  background: var(--official-tint);
-  color: var(--official);
+  border-radius: 1px;
+  border: 1px solid color-mix(in srgb, var(--verdigris) 30%, transparent);
+  background: var(--verdigris-tint);
+  color: var(--verdigris);
   white-space: nowrap;
 }
 
-/* ----------------------------------------------------------------- buttons */
+.chip[data-tone="pass"] {
+  border-color: color-mix(in srgb, var(--verdigris) 30%, transparent);
+  background: var(--verdigris-tint);
+  color: var(--verdigris);
+}
+
+.chip[data-tone="fail"] {
+  border-color: color-mix(in srgb, var(--vermilion) 30%, transparent);
+  background: var(--vermilion-tint);
+  color: var(--vermilion);
+}
+
+.chip[data-tone="warn"] {
+  border-color: color-mix(in srgb, var(--brass) 32%, transparent);
+  background: var(--brass-tint);
+  color: var(--brass);
+}
+
+.chip[data-tone="muted"] {
+  border-color: var(--rule);
+  background: var(--recess);
+  color: var(--ink-3);
+}
+
+/* ==========================================================================
+   11. Buttons
+   ========================================================================== */
 
 .btn {
   font-family: var(--font-ui);
-  font-size: 13.5px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 700;
   letter-spacing: 0.02em;
   padding: 8px 15px;
   border-radius: var(--radius);
-  border: 1px solid var(--rule-strong);
-  background: var(--paper-raised);
+  border: 1px solid var(--rule-2);
+  background: var(--plate);
   color: var(--ink);
   cursor: pointer;
   text-decoration: none;
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  transition: background 0.14s, border-color 0.14s, transform 0.06s;
+  white-space: nowrap;
+  transition: background 0.14s, border-color 0.14s, color 0.14s, transform 0.06s;
 }
 
 .btn:hover {
-  background: var(--paper-sunken);
-  border-color: var(--ink-faint);
+  background: var(--recess);
+  border-color: var(--ink-3);
 }
 
 .btn:active {
@@ -439,33 +882,51 @@ a:hover {
 }
 
 .btn[data-variant="primary"] {
-  background: var(--official);
-  border-color: var(--official);
-  color: #fff;
-}
-
-.btn[data-variant="primary"]:hover {
-  background: color-mix(in srgb, var(--official) 85%, black);
+  background: var(--verdigris);
+  border-color: var(--verdigris);
+  /* Fixed rather than tokenised: the fill is dark in light mode and light in dark mode, so a
+     token would have to invert with it and there is only one place it is used. */
+  color: #f8f7f4;
 }
 
 @media (prefers-color-scheme: dark) {
-  .btn[data-variant="primary"] {
-    color: #0f1319;
+  :root:not([data-theme="light"]) .btn[data-variant="primary"] {
+    color: #0d1114;
   }
 }
 
+:root[data-theme="dark"] .btn[data-variant="primary"] {
+  color: #0d1114;
+}
+
+.btn[data-variant="primary"]:hover {
+  background: var(--verdigris-edge);
+  border-color: var(--verdigris-edge);
+}
+
 .btn[data-variant="danger"] {
-  border-color: color-mix(in srgb, var(--seal) 45%, transparent);
-  color: var(--seal);
+  border-color: color-mix(in srgb, var(--vermilion) 45%, transparent);
+  color: var(--vermilion);
 }
 
 .btn[data-variant="danger"]:hover:not(:disabled) {
-  background: var(--seal-tint);
-  border-color: var(--seal);
+  background: var(--vermilion-tint);
+  border-color: var(--vermilion);
+}
+
+.btn[data-variant="ghost"] {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-2);
+}
+
+.btn[data-variant="ghost"]:hover {
+  background: var(--recess);
+  color: var(--ink);
 }
 
 .btn:disabled {
-  opacity: 0.45;
+  opacity: 0.42;
   cursor: not-allowed;
 }
 
@@ -475,27 +936,286 @@ a:hover {
   flex-wrap: wrap;
 }
 
-/* ------------------------------------------------------------ import page */
-
-.chip[data-tone="pass"] {
-  background: color-mix(in srgb, var(--pass) 14%, transparent);
-  color: var(--pass);
+/* The rail stacks its actions full width rather than wrapping them raggedly. */
+.rail .btn-row {
+  flex-direction: column;
 }
 
-.chip[data-tone="fail"] {
-  background: var(--seal-tint);
-  color: var(--seal);
+.rail .btn {
+  justify-content: center;
 }
 
-.chip[data-tone="warn"] {
-  background: color-mix(in srgb, var(--gold) 18%, transparent);
-  color: color-mix(in srgb, var(--gold) 75%, var(--ink));
+/* ==========================================================================
+   12. Inputs
+   ========================================================================== */
+
+.input,
+.select {
+  font-family: var(--font-ui);
+  font-size: 14.5px;
+  color: var(--ink);
+  background: var(--plate);
+  border: 1px solid var(--rule-2);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-inset);
+  padding: 8px 11px;
+  width: 100%;
 }
 
-.chip[data-tone="muted"] {
-  background: var(--paper-sunken);
-  color: var(--ink-faint);
+.input:focus,
+.select:focus {
+  outline: 2px solid var(--verdigris-edge);
+  outline-offset: -1px;
+  border-color: var(--verdigris-edge);
 }
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 15px;
+}
+
+.form-field label,
+.account-form label,
+.danger-zone label {
+  display: block;
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-weight: 700;
+  margin-bottom: 5px;
+}
+
+/* --- The encoding cell ------------------------------------------------- */
+
+/*
+ * A grade cell carries its own save state as an underline that fills — brass while the write
+ * is in flight, verdigris once accepted, vermilion on a conflict. State belongs here and not
+ * in a floating toast, because come sync a per-row version means one subject can conflict
+ * while the other thirty-nine are fine, and a single global indicator cannot say that.
+ */
+.grade-cell {
+  position: relative;
+  display: inline-block;
+}
+
+.grade-input {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: center;
+  width: 54px;
+  padding: 5px 2px;
+  border: 1px solid var(--rule);
+  border-radius: 1px;
+  background: var(--ground);
+  color: var(--ink);
+}
+
+.grade-input:focus {
+  outline: 2px solid var(--verdigris-edge);
+  outline-offset: -1px;
+  border-color: var(--verdigris-edge);
+  background: var(--plate);
+}
+
+.grade-input::-webkit-outer-spin-button,
+.grade-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.grade-input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+.grade-cell::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  bottom: -2px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.22s ease-out, opacity 0.4s;
+  opacity: 0;
+}
+
+.grade-cell[data-state="saving"] {
+  color: var(--brass);
+}
+
+.grade-cell[data-state="saving"]::after {
+  transform: scaleX(0.65);
+  opacity: 1;
+}
+
+.grade-cell[data-state="saved"] {
+  color: var(--verdigris);
+}
+
+.grade-cell[data-state="saved"]::after {
+  transform: scaleX(1);
+  opacity: 1;
+}
+
+.grade-cell[data-state="error"],
+.grade-cell[data-state="conflict"] {
+  color: var(--vermilion);
+}
+
+.grade-cell[data-state="error"]::after,
+.grade-cell[data-state="conflict"]::after {
+  transform: scaleX(1);
+  opacity: 1;
+}
+
+.grade-cell[data-state="error"] .grade-input,
+.grade-cell[data-state="conflict"] .grade-input {
+  border-color: var(--vermilion);
+}
+
+/* Offline, phase A: editing is visibly unavailable rather than silently broken. */
+.grade-cell[data-locked="true"] .grade-input {
+  background: var(--recess);
+  border-style: dashed;
+  border-color: var(--brass);
+  color: var(--ink-2);
+  cursor: not-allowed;
+}
+
+/* ==========================================================================
+   13. Search and results
+   ========================================================================== */
+
+/*
+ * The search field is the first thing the registrar touches every single time. It gets
+ * display type at 19px and the full width of the page — the one place in this system where a
+ * control is allowed to be the loudest thing on screen.
+ */
+.search-bar {
+  position: relative;
+  margin-bottom: 10px;
+}
+
+.search-bar .input {
+  font-family: var(--font-display);
+  font-variation-settings: "opsz" 24;
+  font-size: 19px;
+  padding: 15px 18px 15px 50px;
+  background: var(--plate);
+  border-width: 1px;
+  border-color: var(--rule-2);
+  box-shadow: var(--shadow-inset), var(--shadow-plate);
+}
+
+/* Glass and handle, drawn in CSS so the field carries no image dependency. */
+.search-bar::before {
+  content: "";
+  position: absolute;
+  left: 20px;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin-top: -9px;
+  border: 2px solid var(--ink-3);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.search-bar::after {
+  content: "";
+  position: absolute;
+  left: 33px;
+  top: 50%;
+  width: 8px;
+  height: 2px;
+  background: var(--ink-3);
+  transform: rotate(45deg);
+  margin-top: 4px;
+  pointer-events: none;
+}
+
+/* The count is set into the rule beneath the field, the way a caption sits under a plate. */
+.count-line {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 0 0 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.results {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--plate);
+  box-shadow: var(--shadow-plate);
+  overflow: hidden;
+}
+
+.result {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--rule);
+  text-decoration: none;
+  color: inherit;
+  box-shadow: inset 3px 0 0 -3px transparent;
+  transition: background 0.12s, box-shadow 0.12s;
+}
+
+.result:last-child {
+  border-bottom: none;
+}
+
+.result:hover {
+  background: color-mix(in srgb, var(--verdigris) 5%, transparent);
+  box-shadow: inset 3px 0 0 0 var(--verdigris);
+}
+
+.result-name {
+  font-family: var(--font-display);
+  font-variation-settings: "opsz" 18;
+  font-size: 16.5px;
+  font-weight: 600;
+}
+
+.result-lrn {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.07em;
+  color: var(--ink-3);
+}
+
+.result .spacer {
+  margin-left: auto;
+}
+
+.empty {
+  padding: 52px 20px;
+  text-align: center;
+  color: var(--ink-3);
+}
+
+mark {
+  background: color-mix(in srgb, var(--brass) 26%, transparent);
+  color: inherit;
+  border-radius: 1px;
+  padding: 0 1px;
+}
+
+/* ==========================================================================
+   14. Import
+   ========================================================================== */
 
 .file-input {
   font-family: var(--font-ui);
@@ -506,20 +1226,20 @@ a:hover {
 
 .file-input::file-selector-button {
   font-family: var(--font-ui);
-  font-size: 13.5px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 700;
   padding: 8px 15px;
   margin-right: 12px;
   border-radius: var(--radius);
-  border: 1px solid var(--rule-strong);
-  background: var(--paper-raised);
+  border: 1px solid var(--rule-2);
+  background: var(--plate);
   color: var(--ink);
   cursor: pointer;
 }
 
 .file-input::file-selector-button:hover {
-  background: var(--paper-sunken);
-  border-color: var(--ink-faint);
+  background: var(--recess);
+  border-color: var(--ink-3);
 }
 
 .file-list {
@@ -530,12 +1250,13 @@ a:hover {
   overflow-y: auto;
   border: 1px solid var(--rule);
   border-radius: var(--radius);
-  background: var(--paper);
+  background: var(--ground);
 }
 
 .file-list li {
   padding: 5px 12px;
-  font-size: 12.5px;
+  font-family: var(--font-mono);
+  font-size: 12px;
   border-bottom: 1px solid var(--rule);
 }
 
@@ -543,41 +1264,48 @@ a:hover {
   border-bottom: none;
 }
 
+/* The tally. Figures set in display type, because the count is the finding. */
 .tally {
   display: flex;
   flex-wrap: wrap;
-  gap: 1px;
-  background: var(--rule);
   border: 1px solid var(--rule);
   border-radius: var(--radius);
   overflow: hidden;
 }
 
 .tally-item {
-  flex: 1 1 120px;
-  background: var(--paper-raised);
-  padding: 12px 16px;
+  flex: 1 1 130px;
+  background: var(--plate);
+  border-right: 1px solid var(--rule);
+  padding: 14px 18px;
+}
+
+.tally-item:last-child {
+  border-right: none;
 }
 
 .tally-n {
-  font-size: 26px;
+  font-family: var(--font-display);
+  font-variation-settings: "opsz" 40;
+  font-variant-numeric: tabular-nums;
+  font-size: 30px;
   font-weight: 700;
-  line-height: 1.1;
+  line-height: 1.05;
 }
 
-.tally-item[data-tone="pass"] .tally-n { color: var(--pass); }
-.tally-item[data-tone="fail"] .tally-n { color: var(--seal); }
-.tally-item[data-tone="warn"] .tally-n { color: var(--gold); }
-.tally-item[data-tone="info"] .tally-n { color: var(--official); }
-.tally-item[data-tone="muted"] .tally-n { color: var(--ink-faint); }
+.tally-item[data-tone="pass"] .tally-n { color: var(--verdigris); }
+.tally-item[data-tone="fail"] .tally-n { color: var(--vermilion); }
+.tally-item[data-tone="warn"] .tally-n { color: var(--brass); }
+.tally-item[data-tone="info"] .tally-n { color: var(--verdigris); }
+.tally-item[data-tone="muted"] .tally-n { color: var(--ink-3); }
 
 .tally-label {
-  font-size: 10.5px;
-  letter-spacing: 0.1em;
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--ink-faint);
-  font-weight: 600;
-  margin-top: 2px;
+  color: var(--ink-3);
+  font-weight: 700;
+  margin-top: 3px;
 }
 
 .issue-list {
@@ -590,7 +1318,7 @@ a:hover {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 9px 0;
+  padding: 10px 0;
   border-bottom: 1px solid var(--rule);
   font-size: 14px;
 }
@@ -605,162 +1333,91 @@ a:hover {
 
 .issue-badge {
   display: inline-block;
-  font-size: 10px;
-  letter-spacing: 0.09em;
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   font-weight: 700;
-  padding: 1px 6px;
-  border-radius: 2px;
-  margin-right: 9px;
-  background: color-mix(in srgb, var(--gold) 20%, transparent);
-  color: color-mix(in srgb, var(--gold) 75%, var(--ink));
+  padding: 2px 7px;
+  border-radius: 1px;
+  margin-right: 10px;
+  border: 1px solid color-mix(in srgb, var(--brass) 32%, transparent);
+  background: var(--brass-tint);
+  color: var(--brass);
 }
 
 .issue-badge[data-severity="error"] {
-  background: var(--seal-tint);
-  color: var(--seal);
+  border-color: color-mix(in srgb, var(--vermilion) 32%, transparent);
+  background: var(--vermilion-tint);
+  color: var(--vermilion);
 }
 
 .issue-cell {
-  font-size: 11.5px;
-  color: var(--ink-faint);
-  margin-left: 9px;
-}
-
-/* -------------------------------------------------------- folder browser */
-
-.folder-browser[data-loading="true"] {
-  opacity: 0.6;
-}
-
-.crumbs {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px;
-  margin-bottom: 8px;
-  font-size: 12.5px;
-}
-
-.crumb {
   font-family: var(--font-mono);
-  font-size: 12.5px;
-  background: none;
-  border: none;
-  padding: 2px 4px;
-  color: var(--official);
-  cursor: pointer;
-  border-radius: 2px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  margin-left: 10px;
 }
 
-.crumb:hover {
-  background: var(--official-tint);
-}
-
-.crumb-sep {
-  color: var(--ink-faint);
-}
-
-.folder-list {
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  background: var(--paper);
-  max-height: 220px;
-  overflow-y: auto;
-}
-
-.folder-row {
+/* Importing a thousand files takes minutes; a silent page reads as a hung one. */
+.progress {
   display: flex;
   align-items: center;
-  gap: 12px;
-  width: 100%;
-  padding: 7px 12px;
-  border: none;
-  border-bottom: 1px solid var(--rule);
-  background: none;
-  text-align: left;
+  gap: 14px;
 }
 
-.folder-row:last-child {
-  border-bottom: none;
-}
-
-.folder-name {
+.progress-bar {
   flex: 1;
-  background: none;
-  border: none;
-  padding: 0;
-  font-family: var(--font-ui);
-  font-size: 14px;
-  color: var(--ink);
-  cursor: pointer;
-  text-align: left;
+  height: 6px;
+  background: var(--recess);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  overflow: hidden;
 }
 
-.folder-name::before {
-  content: "▸ ";
-  color: var(--ink-faint);
+.progress-fill {
+  height: 100%;
+  background: var(--brass);
+  transition: width 160ms ease-out;
 }
 
-.folder-row:hover {
-  background: var(--official-tint);
+/* ==========================================================================
+   15. Print picker, row controls, add subject
+   ========================================================================== */
+
+.print-group {
+  position: relative;
 }
 
-.folder-use {
-  padding: 3px 10px;
-  font-size: 12px;
-}
-
-/* --------------------------------------------------------- autosave + rows */
-
-.save-indicator {
-  position: fixed;
-  right: 20px;
-  bottom: 20px;
-  z-index: 40;
-  font-size: 13px;
+.print-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
   font-weight: 600;
-  padding: 9px 15px;
+  padding: 1px 6px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.level-picker {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 7px);
+  z-index: 30;
+  background: var(--plate);
+  border: 1px solid var(--rule-2);
   border-radius: var(--radius);
-  border: 1px solid var(--rule-strong);
-  background: var(--paper-raised);
-  box-shadow: var(--shadow-card);
-  animation: rise 0.2s ease backwards;
+  box-shadow: var(--shadow-lift);
+  padding: 13px 15px;
+  min-width: 200px;
 }
 
-.save-indicator[data-state="saved"] {
-  color: var(--pass);
-  border-color: color-mix(in srgb, var(--pass) 45%, transparent);
-}
-
-.save-indicator[data-state="error"] {
-  color: var(--seal);
-  border-color: var(--seal);
-  background: var(--seal-tint);
-}
-
-.row-remove {
-  font-family: var(--font-ui);
-  font-size: 13px;
-  line-height: 1;
-  padding: 4px 7px;
-  border-radius: 2px;
-  border: 1px solid transparent;
-  background: none;
-  color: var(--ink-faint);
+.level-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 0;
+  font-size: 14px;
   cursor: pointer;
-}
-
-.row-remove:hover {
-  color: var(--seal);
-  border-color: color-mix(in srgb, var(--seal) 40%, transparent);
-  background: var(--seal-tint);
-}
-
-.row-remove[data-confirm="yes"] {
-  color: var(--seal);
-  border-color: var(--seal);
-  font-weight: 600;
+  white-space: nowrap;
 }
 
 /* Holds the move arrows and the remove button. Wider than .num, which is sized for a grade. */
@@ -769,22 +1426,35 @@ a:hover {
   white-space: nowrap;
 }
 
+.row-remove,
 .row-move {
   font-family: var(--font-ui);
   font-size: 13px;
   line-height: 1;
-  padding: 4px 5px;
-  border-radius: 2px;
+  padding: 4px 6px;
+  border-radius: 1px;
   border: 1px solid transparent;
   background: none;
-  color: var(--ink-faint);
+  color: var(--ink-3);
   cursor: pointer;
 }
 
+.row-remove:hover {
+  color: var(--vermilion);
+  border-color: color-mix(in srgb, var(--vermilion) 40%, transparent);
+  background: var(--vermilion-tint);
+}
+
+.row-remove[data-confirm="yes"] {
+  color: var(--vermilion);
+  border-color: var(--vermilion);
+  font-weight: 700;
+}
+
 .row-move:hover:not(:disabled) {
-  color: var(--official);
-  border-color: color-mix(in srgb, var(--official) 40%, transparent);
-  background: var(--official-tint);
+  color: var(--verdigris);
+  border-color: color-mix(in srgb, var(--verdigris) 40%, transparent);
+  background: var(--verdigris-tint);
 }
 
 /* At the top or bottom of the list. Kept visible so the column does not reflow between rows. */
@@ -796,304 +1466,193 @@ a:hover {
 .add-subject {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px;
-  border: 1px dashed var(--rule-strong);
+  gap: 11px;
+  padding: 15px;
+  border: 1px dashed var(--rule-2);
   border-radius: var(--radius);
-  background: var(--paper);
+  background: var(--ground);
 }
 
 .add-subject-btn {
   border-style: dashed;
 }
 
-/* ----------------------------------------------------------- print picker */
+/* ==========================================================================
+   16. Notices, danger zone, save indicator
+   ========================================================================== */
 
-.print-group {
-  position: relative;
+.notice {
+  border: 1px solid color-mix(in srgb, var(--brass) 30%, transparent);
+  border-left-width: 3px;
+  border-left-color: var(--brass);
+  background: var(--brass-tint);
+  padding: 11px 15px;
+  font-size: 13.5px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  margin-bottom: 20px;
 }
 
-.print-count {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.22);
+.notice[data-tone="info"] {
+  border-color: color-mix(in srgb, var(--verdigris) 30%, transparent);
+  border-left-color: var(--verdigris);
+  background: var(--verdigris-tint);
 }
-
-.level-picker {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 6px);
-  z-index: 30;
-  background: var(--paper-raised);
-  border: 1px solid var(--rule-strong);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-card);
-  padding: 12px 14px;
-  min-width: 190px;
-}
-
-.level-option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0;
-  font-size: 14px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-/* ------------------------------------------------------------ danger zone */
 
 .danger-zone {
-  border: 1px solid color-mix(in srgb, var(--seal) 40%, transparent);
-  background: var(--seal-tint);
+  border: 1px solid color-mix(in srgb, var(--vermilion) 40%, transparent);
+  background: var(--vermilion-tint);
   border-radius: var(--radius);
-  padding: 16px 18px;
-  margin-top: 22px;
+  padding: 18px 20px;
+  margin-top: 26px;
 }
 
 .danger-zone h3 {
-  font-size: 16px;
-  color: var(--seal);
-  margin-bottom: 6px;
+  font-size: 17px;
+  font-variation-settings: "opsz" 20;
+  color: var(--vermilion);
+  margin-bottom: 7px;
 }
 
 .danger-zone p {
-  margin: 0 0 14px;
+  margin: 0 0 15px;
   font-size: 14px;
   max-width: 62ch;
 }
 
-.danger-zone label {
-  display: block;
-  font-size: 10.5px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink-soft);
-  font-weight: 600;
-  margin-bottom: 5px;
-}
-
-/* ------------------------------------------------------------------ inputs */
-
-.input,
-.select {
-  font-family: var(--font-ui);
-  font-size: 14.5px;
-  color: var(--ink);
-  background: var(--paper-raised);
-  border: 1px solid var(--rule-strong);
+/*
+ * The learner-info fields save on blur and still need somewhere to report themselves, so this
+ * survives alongside the per-cell state. It is deliberately quiet — the grid is the primary
+ * signal now.
+ */
+.save-indicator {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 40;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 9px 15px;
   border-radius: var(--radius);
-  padding: 8px 11px;
-  width: 100%;
+  border: 1px solid var(--rule-2);
+  background: var(--plate);
+  box-shadow: var(--shadow-lift);
+  animation: plate-rise 0.2s ease backwards;
 }
 
-.input:focus,
-.select:focus,
-.grade-input:focus {
-  outline: 2px solid var(--official);
-  outline-offset: -1px;
-  border-color: var(--official);
+.save-indicator[data-state="saved"] {
+  color: var(--verdigris);
+  border-color: color-mix(in srgb, var(--verdigris) 45%, transparent);
 }
 
-.search-bar {
-  position: relative;
-  margin-bottom: 20px;
+.save-indicator[data-state="error"] {
+  color: var(--vermilion);
+  border-color: var(--vermilion);
+  background: var(--vermilion-tint);
 }
 
-.search-bar .input {
-  font-size: 17px;
-  padding: 13px 16px 13px 44px;
-  font-family: var(--font-display);
-}
+/* ==========================================================================
+   17. Connection state (offline, phase A)
+   ========================================================================== */
 
-.search-bar::before {
-  content: "";
-  position: absolute;
-  left: 17px;
-  top: 50%;
-  width: 13px;
-  height: 13px;
-  margin-top: -8px;
-  border: 2px solid var(--ink-faint);
-  border-radius: 50%;
-  pointer-events: none;
-}
-
-.search-bar::after {
-  content: "";
-  position: absolute;
-  left: 30px;
-  top: 50%;
-  width: 7px;
-  height: 2px;
-  background: var(--ink-faint);
-  transform: rotate(45deg);
-  margin-top: 4px;
-  pointer-events: none;
-}
-
-.grade-input {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  font-size: 14px;
-  text-align: center;
-  width: 52px;
-  padding: 5px 2px;
-  border: 1px solid var(--rule);
-  border-radius: 2px;
-  background: var(--paper);
-  color: var(--ink);
-}
-
-.grade-input::-webkit-outer-spin-button,
-.grade-input::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-
-.grade-input[type="number"] {
-  -moz-appearance: textfield;
-}
-
-.form-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 14px;
-}
-
-.form-field label {
-  display: block;
-  font-size: 10.5px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  font-weight: 600;
-  margin-bottom: 4px;
-}
-
-/* ----------------------------------------------------------- search result */
-
-.results {
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-  background: var(--paper-raised);
-  box-shadow: var(--shadow-card);
-  overflow: hidden;
-}
-
-.result {
-  display: flex;
+/*
+ * Permanent chrome, never a toast. If the app is serving a cached copy the user finds that
+ * out by looking, not by discovering it when a save disappears.
+ */
+.conn {
+  display: inline-flex;
   align-items: center;
-  gap: 16px;
-  padding: 11px 16px;
-  border-bottom: 1px solid var(--rule);
-  text-decoration: none;
-  color: inherit;
-}
-
-.result:last-child {
-  border-bottom: none;
-}
-
-.result:hover {
-  background: var(--official-tint);
-}
-
-.result-name {
-  font-family: var(--font-display);
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.result-lrn {
+  gap: 7px;
   font-family: var(--font-mono);
-  font-size: 12.5px;
-  letter-spacing: 0.06em;
-  color: var(--ink-faint);
-}
-
-.result .spacer {
-  margin-left: auto;
-}
-
-.count-line {
-  font-size: 12.5px;
-  color: var(--ink-faint);
-  margin: 0 0 10px;
-  letter-spacing: 0.03em;
-}
-
-.empty {
-  padding: 44px 20px;
-  text-align: center;
-  color: var(--ink-faint);
-}
-
-mark {
-  background: color-mix(in srgb, var(--gold) 32%, transparent);
-  color: inherit;
-  border-radius: 2px;
-}
-
-/* ------------------------------------------------------------------ footer */
-
-.foot {
-  border-top: 1px solid var(--rule);
-  margin-top: 40px;
-  padding-top: 14px;
-  font-size: 11.5px;
-  color: var(--ink-faint);
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.notice {
-  border-left: 3px solid var(--gold);
-  background: color-mix(in srgb, var(--gold) 8%, transparent);
-  padding: 10px 14px;
-  font-size: 13px;
-  border-radius: 0 var(--radius) var(--radius) 0;
-  margin-bottom: 22px;
-}
-
-/* ------------------------------------------------------- accounts and sign-in */
-
-/* Who is signed in, in the masthead. */
-.who {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  line-height: 1.2;
-  margin-left: 10px;
-  padding-left: 14px;
-  border-left: 1px solid var(--rule);
-  font-size: 12.5px;
-  color: var(--ink-soft);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 5px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 1px;
+  background: var(--recess);
+  color: var(--ink-3);
   white-space: nowrap;
 }
 
-.who-role {
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
+.conn::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
 }
 
-.masthead nav form {
-  display: inline-flex;
+.conn[data-state="live"] {
+  color: var(--verdigris);
+  border-color: color-mix(in srgb, var(--verdigris) 30%, transparent);
+  background: var(--verdigris-tint);
 }
+
+.conn[data-state="cached"] {
+  color: var(--brass);
+  border-color: color-mix(in srgb, var(--brass) 32%, transparent);
+  background: var(--brass-tint);
+}
+
+.conn[data-state="syncing"] {
+  color: var(--brass);
+  border-color: color-mix(in srgb, var(--brass) 32%, transparent);
+  background: var(--brass-tint);
+}
+
+.conn[data-state="syncing"]::before {
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* "Cached copy · as of 10:42, 12 Aug" — a real timestamp, never just the word offline. */
+.freshness {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--brass);
+  border: 1px solid color-mix(in srgb, var(--brass) 30%, transparent);
+  border-left-width: 3px;
+  border-left-color: var(--brass);
+  background: var(--brass-tint);
+  padding: 8px 12px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  margin-bottom: 18px;
+}
+
+/* A learner in the index whose full record was never cached. */
+.result[data-cached="false"] {
+  opacity: 0.55;
+}
+
+.result[data-cached="false"]:hover {
+  background: transparent;
+  box-shadow: inset 3px 0 0 0 var(--brass);
+}
+
+/* ==========================================================================
+   18. Sign-in and accounts
+   ========================================================================== */
 
 /* The sign-in page carries no navigation, so it is centred rather than left-aligned. */
 .login-page {
-  max-width: 460px;
+  max-width: 470px;
 }
 
 .login-card {
-  margin-top: 8vh;
+  margin-top: 9vh;
+  overflow: hidden;
 }
 
 .login-form {
@@ -1103,48 +1662,41 @@ mark {
 }
 
 .login-form label {
-  font-size: 11.5px;
-  letter-spacing: 0.1em;
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--ink-faint);
-  font-weight: 600;
-  margin-top: 10px;
+  color: var(--ink-3);
+  font-weight: 700;
+  margin-top: 12px;
 }
 
 .login-form button {
-  margin-top: 18px;
+  margin-top: 20px;
   justify-content: center;
 }
 
 .login-error {
-  border-left: 3px solid var(--seal);
-  background: color-mix(in srgb, var(--seal) 8%, transparent);
-  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--vermilion) 35%, transparent);
+  border-left-width: 3px;
+  border-left-color: var(--vermilion);
+  background: var(--vermilion-tint);
+  color: var(--vermilion);
+  padding: 10px 13px;
   font-size: 13px;
   border-radius: 0 var(--radius) var(--radius) 0;
-  margin: 14px 0 0;
+  margin: 15px 0 0;
 }
 
 .account-form {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 15px;
   max-width: 720px;
-}
-
-.account-form label {
-  display: block;
-  font-size: 11.5px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  font-weight: 600;
-  margin-bottom: 4px;
 }
 
 .field-row {
   display: flex;
-  gap: 14px;
+  gap: 15px;
   flex-wrap: wrap;
 }
 
@@ -1165,26 +1717,38 @@ mark {
   flex-basis: 100%;
 }
 
-/* ------------------------------------------------------------------ import */
+/* ==========================================================================
+   19. Footer
+   ========================================================================== */
 
-/* Importing a thousand files takes minutes; a silent page reads as a hung one. */
-.progress {
+.foot {
+  border-top: 1px solid var(--rule-2);
+  box-shadow: 0 -3px 0 -2px var(--rule);
+  margin-top: 46px;
+  padding-top: 15px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
   display: flex;
-  align-items: center;
-  gap: 12px;
+  gap: 20px;
+  flex-wrap: wrap;
 }
 
-.progress-bar {
-  flex: 1;
-  height: 6px;
-  background: var(--rule);
-  border-radius: 3px;
-  overflow: hidden;
-}
+/* ==========================================================================
+   20. Motion
+   ========================================================================== */
 
-.progress-fill {
-  height: 100%;
-  background: var(--gold);
-  border-radius: 3px;
-  transition: width 160ms ease-out;
+/*
+ * One orchestrated load — plates rise in stagger, the seal strikes, the guilloche fades up —
+ * and nothing moves after that except direct responses to input. All of it off for anyone who
+ * has asked for less.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+  }
 }

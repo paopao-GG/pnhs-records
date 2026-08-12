@@ -7,6 +7,24 @@ stands today; [changes.md](changes.md) is the prioritised backlog this design se
 This document covers the four areas that need designing before code: multi-format import,
 accounts and roles, offline editing with sync, and deployment.
 
+> ### Status — corrected 12 August 2026
+>
+> Most of this document described work that has since been built, and in two places the build
+> settled a question differently from the design. Those sections are corrected in place rather
+> than left to mislead; each correction says what changed and why.
+>
+> | Area | State |
+> |---|---|
+> | §2 Multi-format import — SHS, JHS, Form 137 | **Built** |
+> | §3 Migrations | **Built**, with a different mechanism — see the correction in §3 |
+> | §4 Accounts and roles | **Built.** Soft delete deliberately **not** built — see §4 |
+> | §5 Offline editing and sync | **Read-only half built** (§5a). Sync still open, still gated on the question below |
+> | §6 Deployment | **Built** |
+> | §9 The frontend | **Built** — new section, added with the redesign |
+>
+> The open question in §5 is unanswered and still decides whether the rest of it is 4–6 weeks of
+> work or none.
+
 ---
 
 ## 1. What changes, in one picture
@@ -47,8 +65,8 @@ Three parsers behind one entry point, all producing the existing `Sf10Record`
 
 ```
 file → sniff → ┬ SF10-SHS   .xlsx, sheets FRONT / BACK      (built)
-               ├ SF10-JHS   .xlsx, sheets Front / Back      (map verified)
-               └ Form 137   .docx, two internal variants     (to build)
+               ├ SF10-JHS   .xlsx, sheets Front / Back      (built)
+               └ Form 137   .docx, two internal variants     (built)
                                     ↓
                               Sf10Record → database
 ```
@@ -85,8 +103,19 @@ a different computation that is not documented anywhere available. Store what th
 says. This is the same principle as the SF10 rule about not writing formula cells, for the
 same reason: the source document is the authority.
 
-`PALIZA` has 16 tables rather than 8. Investigate before generalising — likely a transferee or
-two-school record. Flag rather than guess.
+`PALIZA` has 16 tables rather than 8. **Settled by the build: it is one learner's form
+duplicated inside a single file, not two learners and not a transferee.** The first copy is
+imported and the rest flagged. `npm run test:f137` parses all 20 sample files, including this
+one and both storage variants.
+
+Two other things the build settled that this design could not:
+
+- **No LRN exists on these forms.** A generated `F137-…` key derived from name and birthdate
+  keeps identity stable across re-imports, and `lrn_placeholder` makes the UI show *No LRN ·
+  pre-2011 record* so an invented value is never presented as a real one.
+- **A year with printed subject names but no marks is not an attended year.** One learner
+  dropped out in January; importing the blank Third and Fourth Year would have asserted an
+  enrolment that never happened.
 
 ### Storing originals
 
@@ -117,7 +146,7 @@ instead.
 
 ---
 
-## 3. Migrations — build this first
+## 3. Migrations — build this first · **BUILT, with one correction**
 
 Everything else in this document adds columns to tables that **already hold real learner
 data**. There is currently no mechanism that can do that.
@@ -135,14 +164,30 @@ later, as a query reading a column that does not exist.
 
 ### The mechanism
 
-`PRAGMA user_version` as the schema version, with ordered steps applied on boot **after** the
-existing create pass:
+> #### ⚠ Correction — the version does **not** live in `PRAGMA user_version`
+>
+> This section originally specified `PRAGMA user_version` as the schema version. That is the
+> conventional answer for SQLite and it does not work here.
+>
+> **A hosted libSQL database refuses to execute `PRAGMA user_version = n` at all** — it answers
+> *"SQL not allowed statement"*. Reading the pragma works; writing it does not. So the read
+> would have succeeded, every migration would have applied, the write recording that fact would
+> have failed, and the next boot would have applied all of them again — against real learner
+> data, with `ALTER TABLE` statements that are not idempotent.
+>
+> The version lives in a **`schema_version` table** instead, written inside the same transaction
+> as the migration it records. See `lib/db/migrations.ts` and commit `f4a988f`.
+>
+> An existing local database whose version was already recorded in the pragma is adopted on
+> first run, so nothing re-applies.
+
+Ordered steps applied on boot **after** the existing create pass:
 
 ```
-1. read PRAGMA user_version          → current
+1. read schema_version           → current   (adopting PRAGMA user_version if no row yet)
 2. for each migration numbered > current, in order:
        run it inside a transaction
-       set PRAGMA user_version = its number
+       write its number to schema_version, in that same transaction
 3. new columns therefore arrive exactly once, on whichever database is running
 ```
 
@@ -159,9 +204,12 @@ Rules that matter:
 
 This is roughly 30 lines of code and it is not optional once real records exist.
 
+`npm run test:migrations` runs the steps against a copy of a pre-migration database and asserts
+both that the new columns arrive and that the existing rows survive.
+
 ---
 
-## 4. Accounts and roles
+## 4. Accounts and roles · **BUILT**
 
 Two roles, as specified:
 
@@ -179,8 +227,25 @@ Two roles, as specified:
 - `sessions` — token, user, expiry. Signed, HTTP-only, `SameSite=Lax` cookie.
 - Hashing with **`scrypt` from `node:crypto`**. No new dependency; consistent with the rest of
   the project's dependency discipline.
-- Route protection in middleware, applied to pages *and* API endpoints. Endpoints must be
-  checked independently — an offline client calls them directly.
+- Route protection applied to pages *and* API endpoints. Endpoints must be checked
+  independently — an offline client calls them directly.
+
+> #### ⚠ Correction — middleware cannot be the guard
+>
+> This originally said "route protection in middleware". Middleware runs on the Edge runtime,
+> where `node:crypto` does not exist, so it **cannot verify a session cookie** — only notice
+> that one is present. Importing the cookie name from the auth module dragged the database layer
+> into the Edge bundle and failed the build outright, which is the boundary announcing itself.
+>
+> Every page, action and route handler calls `requireUser()` for itself. `middleware.ts` still
+> exists, but only to spare a signed-out visitor a redirect chain; treating it as the security
+> boundary is how Next.js applications get walked past their own authentication.
+>
+> Two more the build settled: **API routes answer 401, never a redirect** (a caller following a
+> redirect gets HTTP 200 and an HTML form where it asked for a workbook, which reads as
+> success), and **rate limiting had to move into the database**, because a module-level counter
+> is per-instance memory and on a host running more than one instance it counts a fraction of
+> the attempts.
 
 The unglamorous parts, which are the ones that get skipped:
 
@@ -191,7 +256,17 @@ The unglamorous parts, which are the ones that get skipped:
   adviser with a live cookie is still an adviser until it expires.
 - Session cookies: `HttpOnly`, `Secure`, `SameSite=Lax`, with a real expiry.
 
-### Delete becomes soft delete
+### Delete becomes soft delete — **NOT BUILT. Deliberately.**
+
+> Everything in this section describes a design that was **not implemented**. `students` has no
+> `deleted_at` and no `deleted_by`, delete is permanent, and there is no restore. The "Restore a
+> deleted record" row in the roles table above therefore describes nothing that exists.
+>
+> It was dropped so the importer's dedup query could stay as it is — see the trap below, which
+> is the reason. If soft delete is ever added, this section and that trap are the design to
+> follow, and the query change is not optional.
+
+The design, if it is picked up:
 
 `students` gains `deleted_at` and `deleted_by`. Deleting sets them; every query filters them
 out. The adviser experience is unchanged — the record disappears from search, and the
@@ -272,6 +347,41 @@ record creation and LAN HTTPS — each with its own failure modes.
 >
 > If the real need is the second, most of this section should be deleted rather than built.
 > Confirm which before starting.
+
+### 5a. What is built: the read-only half
+
+The cheap column of that table now exists, and it cost about what the table said it would. It is
+worth having whichever way the question is answered, and nothing in it is wasted if the
+expensive column is built later.
+
+- A **service worker** (`public/sw.js`), network-first for pages, cache-first for the shell and
+  the self-hosted fonts. Records opened while connected stay readable when the server does not
+  answer.
+- **Connection state is permanent chrome in the masthead** — `Live` or `Cached`, never a toast.
+  A toast tells you once, while you are looking elsewhere, and then deletes the evidence.
+- A **freshness line** on a cached page: *Saved copy · as of 10:42, 12 Aug*. A real timestamp,
+  because "offline" on its own does not tell a registrar whether the grade they encoded an hour
+  ago is in front of them.
+- **Editing is disabled offline, visibly.** There is no outbox behind those cells yet, so a
+  grade typed while disconnected would be written nowhere and reported as saved. A dead field
+  costs an adviser a minute; a silently discarded quarter costs a learner their record.
+- Installable as a PWA (`app/manifest.ts`), which is what makes `display: standalone` and the
+  offline shell useful together.
+
+Three things the build settled that the design did not anticipate:
+
+- **`navigator.onLine` is not the signal.** It reports whether a network interface exists, which
+  on a school LAN is true whether or not anything is listening — exactly the outage this half is
+  meant to cover. The service worker announces when it has had to answer from cache, which is
+  the signal that actually means "you are looking at a copy".
+- **The offline state must be able to release itself.** The first version could only return on
+  an `online` event, so one failed request left every grade cell disabled with no event coming,
+  because the browser had never thought it was offline. A 204 probe (`/api/health`) now runs
+  *only* while offline and proves the way back. This is covered by `npm run test:browser`.
+- **Cached pages expire after twelve hours.** Sign-out purges them, but a browser closed without
+  signing out would otherwise leave every record the last person opened readable on a shared
+  office machine indefinitely. Twelve hours covers an outage lasting most of a working day and
+  does not survive the machine being left overnight.
 
 ### Scope boundary
 
@@ -449,42 +559,114 @@ addresses — on a public URL rather than a machine in a locked office.
 
 ---
 
-## 7. Suggested build order
+## 7. Build order — as executed
 
-0. **Migrations (§3) — before anything that adds a column.** Nothing else in this list can
-   reach the live database without it.
-1. Items #1–#3 from [changes.md](changes.md) — small, independent, immediately useful.
-2. **#4 autosave with `record_history`** — the history table is a prerequisite for auditing.
-3. **#5 JHS importer** — largely de-risked; completes SF10 coverage.
-4. **#6 accounts** — before offline, which needs identity to attribute changes.
-5. **#7 Form 137** — self-contained; can run in parallel with accounts if there are two people.
-6. **#8 offline and sync** — last, because it depends on the API surface stabilising and on
-   accounts existing. Settle the open question in §5 before starting it.
-7. **#9 deploy.**
+The order below was followed and everything except the last line is done.
 
-Do not start #8 before #6. Sync without identity cannot attribute or resolve a conflict.
+| | | |
+|---|---|---|
+| 0 | Migrations (§3) — before anything that adds a column | ✅ |
+| 1 | Items #1–#3 from [changes.md](changes.md) — small, independent | ✅ |
+| 2 | #4 autosave with `record_history` | ✅ |
+| 3 | #5 JHS importer | ✅ |
+| 4 | #6 accounts — before offline, which needs identity to attribute changes | ✅ |
+| 5 | #7 Form 137 | ✅ |
+| 6 | #9 deploy | ✅ |
+| 7 | The frontend redesign and the read-only offline half (§5a, §9) | ✅ |
+| 8 | **#8 offline sync** — the remaining item | ⬜ **Settle the open question in §5 first** |
+
+Do not start #8 before reading §5. Sync without identity cannot attribute or resolve a conflict —
+identity now exists, so that objection is discharged; the open question about whether the feature
+is needed at all is not.
 
 ---
 
 ## 8. Testing
 
-The system currently has good coverage of the part that matters most — `npm run roundtrip` and
-`npm run verify` prove the SF10 fill path end to end — and **no committed browser tests at
-all**. The Playwright flows used during development were never added to the repo.
+`npm run roundtrip` and `npm run verify` prove the SF10 fill path end to end, and the rest of
+this list has been filled in as the work landed. **The "no committed browser tests at all" this
+section used to open with is no longer true** — `npm run test:browser` exists.
 
-This round adds accounts, two more parsers and a sync protocol to a system holding permanent
-academic records. That surface cannot go in untested.
+| Area | Test | State |
+|---|---|---|
+| JHS importer | `npm run roundtrip` covers JHS files — same guarantee already proven for SHS | ✅ |
+| Form 137 | `npm run test:f137` parses all 20 sample files; both variants, plus `PALIZA` | ✅ |
+| Migrations | `npm run test:migrations` runs against a copy of a **pre-migration** database and asserts the columns exist and the data survives | ✅ |
+| Accounts | `npm run test:auth` — an adviser cannot reach admin routes; a deactivated account cannot act; a forged cookie is refused | ✅ |
+| Deployment | `npm run smoke -- <url>` — the 401s, the 409 archive-only guard, and a file through ticket → object storage → import → byte-identical download | ✅ |
+| Browser flows | `npm run test:browser` — see below | ✅ |
+| Sync | Two clients editing the same subject conflict; two clients editing different subjects **do not** | ⬜ with #8 |
 
-The minimum worth committing alongside the work:
+The sync row is still the one that would catch the versioning-granularity bug described in §5,
+and it is still unwritten because the feature is unbuilt.
 
-| Area | Test |
-|---|---|
-| JHS importer | Extend `npm run roundtrip` to cover JHS files — same guarantee already proven for SHS |
-| Form 137 | Parse all 20 sample files in CI; assert learner identity and subject counts. Both variants, plus `PALIZA` |
-| Migrations | Run them against a copy of a **pre-migration** database and assert the columns exist and data survives |
-| Accounts | An adviser cannot reach admin routes; a deactivated account cannot act |
-| Sync | Two clients editing the same subject conflict; two clients editing different subjects **do not** |
-| Browser flows | Commit the existing Playwright flows — search, edit, delete, import, print |
+### `npm run test:browser`
 
-The sync row is the one that would have caught the versioning-granularity bug described in §5
-before it reached a user.
+Twenty-one checks covering what no amount of `fetch` can see. It runs Chrome through Playwright
+via `channel: "chrome"` — the browser already on the machine, because Playwright's own Chromium
+download is a few hundred megabytes and is what failed when this was first attempted. It builds
+its own scratch database and starts its own dev server against it, rather than accepting a URL
+the way `smoke.ts` does: these checks type into grade cells, and a server someone else started
+is a server pointing at who-knows-what.
+
+Three of the checks exist because the redesign shipped them broken and a screenshot pass caught
+them by eye:
+
+- **Arrow keys must not change a grade.** On `<input type="number">` the up and down arrows
+  increment the value. The encoding grid binds them to movement, so a stray keypress over a mark
+  moves the cursor instead of silently rewriting the mark and autosaving it. A safety property,
+  not an ergonomic one.
+- **The offline lock must release itself** without a reload. See §5a.
+- **Vertical movement must stop at the term boundary** — holding ↓ past the last subject of
+  Grade 7 must not land in Grade 8.
+
+`npm test` stays as it was: unit checks only, no server, fast. `test:browser` is separate for the
+same reason `smoke` is — it needs something running.
+
+---
+
+## 9. The frontend
+
+Redesigned in August 2026. The previous interface was a warm manila "filing room" aesthetic; the
+current one is **"Engraved Registry"** — the app should look like the security document it
+produces rather than the cabinet it replaced.
+
+Recorded here because the next person to touch it will otherwise re-litigate three decisions.
+
+### The system
+
+`app/globals.css` is the whole design system — plain CSS, custom properties, `data-*` variants.
+No Tailwind, no CSS modules, no component library. About seventy class names are the contract
+between it and the markup.
+
+- **Palette.** A cool oyster ground with exactly two accents carrying the load: **verdigris**
+  for affirmative and navigational states, **brass** for pending and advisory. **Vermilion**
+  appears *only* for destruction and failing marks — that scarcity is the entire reason it reads
+  as a warning. Full dark palette, defined rather than filtered.
+- **Type.** Fraunces (display), Atkinson Hyperlegible (all UI text, drawn for low-vision
+  legibility — not a niche concern in an office reading names and six-digit numbers all day),
+  IBM Plex Mono (tabular, for grades and LRNs). All three OFL and **self-hosted**; see
+  `public/fonts/README.txt`.
+- **Composition.** The record page is a sticky identity rail beside a scrolling column of term
+  plates, so the learner's name and seal stay on screen while six years of terms move past.
+
+### Three decisions worth not re-opening
+
+1. **Fonts are self-hosted, not linked.** The app has to render with no network — that was true
+   when it ran on the registrar's PC and it is true again now that offline is a feature. A font
+   CDN would defeat the service worker's precache and would also put a third party on the
+   request path of a page showing a child's personal data.
+2. **Grade-cell save state lives in the cell**, as an underline that fills, not in a floating
+   indicator. This is the hook #8 attaches to: §5 requires versioning per `term_subjects` row,
+   so one subject can be in conflict while thirty-nine are fine, and a single global indicator
+   cannot express that. The conflict state is already styled.
+3. **The seal and the term stamp are one function.** `promotionMark()` in
+   `app/students/[id]/page.tsx` produces both. They were two expressions for a day and drifted
+   immediately — the plate said "Incomplete" where the seal said "Not stated" about the same
+   term. A permanent record that describes itself two ways on one screen is one nobody should
+   trust.
+
+### Not built
+
+The sync surfaces designed in §5 — outbox drawer, conflict plate, provisional records, the LRN
+merge screen. They are designed and they are not implemented, pending the open question.
