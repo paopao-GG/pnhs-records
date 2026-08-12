@@ -50,6 +50,14 @@ export interface ShsBlock {
   headerRow: number;
   /** Row holding TRACK/STRAND and SECTION - +2 from the header on three blocks, +1 on one. */
   trackRow: number;
+  /**
+   * Row holding SUBJECTS / Quarter / SEM FINAL GRADE / ACTION TAKEN.
+   *
+   * `firstSubjectRow - 4` on all four blocks, but written out per block like every other row
+   * here: this map exists because the blocks are NOT uniformly offset, and one derived value
+   * among explicit ones is how the next irregularity gets missed.
+   */
+  columnHeaderRow: number;
   /** First of the 12 subject rows. */
   firstSubjectRow: number;
   /** Formula row; read-only. */
@@ -66,6 +74,7 @@ export const SHS_BLOCKS: readonly ShsBlock[] = [
     sheet: "FRONT",
     headerRow: 23,
     trackRow: 25,
+    columnHeaderRow: 27,
     firstSubjectRow: 31,
     generalAverageRow: 43,
     remarksRow: 45,
@@ -77,6 +86,7 @@ export const SHS_BLOCKS: readonly ShsBlock[] = [
     sheet: "FRONT",
     headerRow: 66,
     trackRow: 68,
+    columnHeaderRow: 70,
     firstSubjectRow: 74,
     generalAverageRow: 86,
     remarksRow: 88,
@@ -88,6 +98,7 @@ export const SHS_BLOCKS: readonly ShsBlock[] = [
     sheet: "BACK",
     headerRow: 4,
     trackRow: 5,
+    columnHeaderRow: 7,
     firstSubjectRow: 11,
     generalAverageRow: 23,
     remarksRow: 25,
@@ -99,6 +110,7 @@ export const SHS_BLOCKS: readonly ShsBlock[] = [
     sheet: "BACK",
     headerRow: 46,
     trackRow: 48,
+    columnHeaderRow: 50,
     firstSubjectRow: 54,
     generalAverageRow: 66,
     remarksRow: 68,
@@ -139,6 +151,24 @@ export const SHS_SUBJECT_COL = {
 
 /** Formula cell - read only. */
 export const SHS_GENERAL_AVERAGE_COL = "BD";
+
+/**
+ * The block's own printed furniture - the words SCHOOL:, TRACK/STRAND:, SUBJECTS and so on.
+ *
+ * Only cleared for a semester the learner will never have, i.e. the fourth block of a
+ * three-semester programme. A block that is merely not reached yet keeps its labels: that
+ * section is empty, not absent, and a form with an unlabelled gap in it looks like a printing
+ * fault rather than a record.
+ *
+ * Verified against all four blocks; the columns are the same in each, only the rows differ.
+ */
+export const SHS_BLOCK_LABEL_COL = {
+  header: ["A", "AB", "AM", "AY", "BH"],
+  track: ["A", "AN"],
+  columnHeader: ["A", "I", "AT", "BD", "BI"],
+  generalAverage: ["A"],
+  remarks: ["A"],
+} as const;
 
 /** Values accepted by the template's category dropdown (defined names on the Helper sheet). */
 export const SHS_CATEGORIES = ["Core", "Applied", "Specialized", "Other_Subjects"] as const;

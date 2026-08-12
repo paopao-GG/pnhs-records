@@ -36,6 +36,49 @@ export interface QuarterGrades {
   q4?: number | null;
 }
 
+/** The four quarter fields, in form order. Slice it to a term's period count. */
+export const QUARTER_FIELDS = ["q1", "q2", "q3", "q4"] as const;
+export type QuarterField = (typeof QUARTER_FIELDS)[number];
+
+/** Semesters in an SHS programme when the learner's record does not say. */
+export const DEFAULT_SHS_SEMESTERS = 4;
+
+/**
+ * How many quarter columns a term is graded over.
+ *
+ * From SY 2026-2027 a JHS grade level is graded over three periods rather than four. The count
+ * is stored per term because a learner straddles the cutover — Grade 7 under four quarters and
+ * Grade 9 under three sit on the same permanent record — and because a term already encoded
+ * must keep the shape it was encoded in.
+ *
+ * `null` means the historical default, which is why no existing row needed a backfill. Read
+ * every period count through here rather than off `grading_periods` directly; the fallback is
+ * the whole reason old records still print correctly.
+ *
+ * SHS is unaffected: a semester has two quarters and always did. Three-versus-four there is a
+ * count of semester blocks, which lives on the learner as `shs_semesters`.
+ */
+export function gradingPeriods(term: {
+  level: number;
+  grading_periods?: number | null;
+}): number {
+  if (term.grading_periods != null) return term.grading_periods;
+  return term.level <= 10 ? 4 : 2;
+}
+
+/** The quarter fields a term actually uses, e.g. q1..q3 for a three-period Grade 9. */
+export function quarterFieldsFor(term: {
+  level: number;
+  grading_periods?: number | null;
+}): readonly QuarterField[] {
+  return QUARTER_FIELDS.slice(0, gradingPeriods(term));
+}
+
+/** Semesters in a learner's SHS programme. Null means the pre-2026 four. */
+export function shsSemesters(student: { shs_semesters?: number | null }): number {
+  return student.shs_semesters ?? DEFAULT_SHS_SEMESTERS;
+}
+
 /**
  * Final rating for one subject, as the form displays it.
  *

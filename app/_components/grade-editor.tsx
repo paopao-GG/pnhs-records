@@ -9,6 +9,7 @@ import {
   generalAverage,
   isPassing,
   promotionRemark,
+  quarterFieldsFor,
 } from "@/lib/grading.ts";
 import { jhsFinalRatingIsComputed } from "@/lib/sf10/jhs-map.ts";
 import type { StudentRow, SubjectRow, TermRow } from "@/lib/db/queries.ts";
@@ -104,6 +105,9 @@ export function GradeEditor({
 
       {bundles.map((b) => {
         const isJhs = b.term.level <= 10;
+        // Q1-Q3 on a term graded over three periods, Q1-Q4 on one graded over four. Per term,
+        // so a record can hold both — see gradingPeriods() in lib/grading.ts.
+        const quarters = quarterFieldsFor(b.term);
         const { finals, genAve } = computed[b.term.id];
         const passing = isPassing(genAve);
         const remark = promotionRemark(genAve, isJhs ? "jhs" : "shs");
@@ -142,10 +146,11 @@ export function GradeEditor({
                     <thead>
                       <tr>
                         <th className="subject">{isJhs ? "Learning Area" : "Subject"}</th>
-                        <th className="num">Q1</th>
-                        <th className="num">Q2</th>
-                        {isJhs && <th className="num">Q3</th>}
-                        {isJhs && <th className="num">Q4</th>}
+                        {quarters.map((q) => (
+                          <th className="num" key={q}>
+                            {q.toUpperCase()}
+                          </th>
+                        ))}
                         <th className="final">Final</th>
                         <th className="num" />
                       </tr>
@@ -157,22 +162,20 @@ export function GradeEditor({
                         return (
                           <tr key={s.id}>
                             <td className="subject">{s.subject_name}</td>
-                            {(["q1", "q2", "q3", "q4"] as const)
-                              .slice(0, isJhs ? 4 : 2)
-                              .map((q, qi) => (
-                                <td className="num" key={q}>
-                                  <GradeCell
-                                    subjectId={s.id}
-                                    field={q}
-                                    initial={s[q]}
-                                    label={`${s.subject_name} ${q.toUpperCase()}`}
-                                    row={i}
-                                    col={qi}
-                                    onSaved={onSaved(s.id)}
-                                    onStateChange={onStateChange}
-                                  />
-                                </td>
-                              ))}
+                            {quarters.map((q, qi) => (
+                              <td className="num" key={q}>
+                                <GradeCell
+                                  subjectId={s.id}
+                                  field={q}
+                                  initial={s[q]}
+                                  label={`${s.subject_name} ${q.toUpperCase()}`}
+                                  row={i}
+                                  col={qi}
+                                  onSaved={onSaved(s.id)}
+                                  onStateChange={onStateChange}
+                                />
+                              </td>
+                            ))}
                             <td className="final">
                               {manualFinal ? (
                                 <GradeCell
@@ -181,7 +184,7 @@ export function GradeEditor({
                                   initial={s.final_rating}
                                   label={`${s.subject_name} final rating`}
                                   row={i}
-                                  col={isJhs ? 4 : 2}
+                                  col={quarters.length}
                                   onSaved={onSaved(s.id)}
                                   onStateChange={onStateChange}
                                 />
@@ -213,7 +216,8 @@ export function GradeEditor({
                     </tbody>
                     <tfoot>
                       <tr>
-                        <td colSpan={isJhs ? 5 : 3}>General Average</td>
+                        {/* The subject column plus this term's quarters. */}
+                        <td colSpan={1 + quarters.length}>General Average</td>
                         <td className="final">
                           {genAve == null ? (
                             <span className="muted">—</span>

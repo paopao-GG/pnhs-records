@@ -14,6 +14,8 @@ const EMPTY: NewStudentInput = {
   birthdate: "",
   level: "7",
   semester: "1",
+  // Three from SY 2026-2027 onward, which is what almost every new record will be.
+  periods: "3",
   schoolYear: "",
   section: "",
   adviser: "",
@@ -147,11 +149,28 @@ export function NewStudentForm() {
               </Field>
             )}
 
+            {/*
+              One control, two meanings — quarters on a JHS term, semesters in an SHS
+              programme. It is phrased as the registrar would ask it rather than as the schema
+              stores it, and it defaults to three because that is what the school encodes from
+              SY 2026-2027 onward. Four stays available for back-encoding an earlier year.
+            */}
+            <Field label={isShs ? "Semesters in Programme" : "Grading Periods"}>
+              <select
+                className="select"
+                value={form.periods}
+                onChange={(e) => set("periods", e.target.value)}
+              >
+                <option value="3">{isShs ? "3 semesters" : "3 quarters"}</option>
+                <option value="4">{isShs ? "4 semesters" : "4 quarters"}</option>
+              </select>
+            </Field>
+
             <Field label="School Year">
               <input
                 className="input mono"
                 value={form.schoolYear}
-                placeholder="2025-2026"
+                placeholder="2026-2027"
                 onChange={(e) => set("schoolYear", e.target.value)}
               />
             </Field>

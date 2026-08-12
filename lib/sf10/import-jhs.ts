@@ -112,6 +112,21 @@ export function parseJhsWorkbook(wb: Workbook): ParsedJhs {
     const classRow = block.headerRow + JHS_OFFSET.classInfo;
     const firstSubject = block.headerRow + JHS_OFFSET.firstSubject;
 
+    /*
+     * Three grading periods or four, read from the form rather than from the grades.
+     *
+     * The quarter-numbering row carries literal 1 2 3 4; a form issued under the three-period
+     * scheme has nothing in the fourth column. That cell is the discriminator.
+     *
+     * The obvious alternative — "no subject has a Q4, so it must be a three-period form" — is
+     * wrong in the ordinary case: a four-period record imported in November has no Q4 either,
+     * and stamping it as three-period would permanently drop a column from that learner's
+     * printed record. This reads a property of the blank form, which is the same reasoning
+     * detect-form.ts uses to tell JHS from SHS by sheet-name casing.
+     */
+    const fourthHeader = read(`${JHS_SUBJECT_COL.q4}${block.headerRow + JHS_OFFSET.quarterHeader}`);
+    const gradingPeriods = fourthHeader === null || String(fourthHeader).trim() === "" ? 3 : 4;
+
     const subjects: SubjectRecord[] = [];
     for (let i = 0; i < JHS_SUBJECT_ROW_COUNT; i++) {
       const row = firstSubject + i;
@@ -154,9 +169,32 @@ export function parseJhsWorkbook(wb: Workbook): ParsedJhs {
 
     if (subjects.length === 0) continue; // a grade level this learner did not attend here
 
+    /*
+     * A form with no fourth-quarter header that carries fourth-quarter marks anyway.
+     *
+     * Neither reading can be trusted, so neither is acted on silently: the grade is kept and
+     * the block is flagged for a human to check against the paper form. Dropping the mark
+     * would destroy an encoded quarter; ignoring the header would print a column the school's
+     * form says does not exist.
+     */
+    if (gradingPeriods === 3) {
+      const withQ4 = subjects.filter((s) => s.q4 != null);
+      if (withQ4.length > 0) {
+        issues.push({
+          severity: "warning",
+          field: `grade${block.level}.gradingPeriods`,
+          message:
+            `Grade ${block.level} has no 4th quarter heading, but ${withQ4.length} ` +
+            `${withQ4.length === 1 ? "subject carries" : "subjects carry"} a 4th quarter mark ` +
+            `(${withQ4.map((s) => s.name).join(", ")}). Check against the original form.`,
+        });
+      }
+    }
+
     subjectCount += subjects.length;
     terms.push({
       level: block.level,
+      gradingPeriods,
       schoolYear: cleanText(read(`${JHS_CLASS_COL.schoolYear}${classRow}`)),
       section: cleanText(read(`${JHS_CLASS_COL.section}${classRow}`)),
       adviser: cleanText(read(`${JHS_CLASS_COL.adviser}${classRow}`)),

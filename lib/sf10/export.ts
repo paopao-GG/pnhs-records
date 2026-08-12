@@ -9,7 +9,7 @@
  */
 
 import { Workbook } from "../xlsx/workbook.ts";
-import { setCell, setCells, type CellValue } from "../xlsx/cells.ts";
+import { MissingCellError, setCell, setCells, type CellValue } from "../xlsx/cells.ts";
 import type { Sf10Record, TermRecord } from "./types.ts";
 import {
   JHS_BLOCKS,
@@ -25,6 +25,7 @@ import {
 } from "./jhs-map.ts";
 import {
   SHS_BLOCKS,
+  SHS_BLOCK_LABEL_COL,
   SHS_ELIGIBILITY,
   SHS_HEADER_COL,
   SHS_LEARNER,
@@ -32,6 +33,7 @@ import {
   SHS_SUBJECT_ROW_COUNT,
   SHS_TRACK_COL,
   shsSemesterLabel,
+  type ShsBlock,
 } from "./shs-map.ts";
 
 type Writes = Record<string, CellValue | undefined>;
@@ -66,7 +68,23 @@ class SheetWriter {
   flush(): void {
     for (const sheet of new Set([...this.pending.keys(), ...this.clears.keys()])) {
       let xml = this.wb.sheetXml(sheet);
-      for (const addr of this.clears.get(sheet) ?? []) xml = setCell(xml, addr, null);
+      for (const addr of this.clears.get(sheet) ?? []) {
+        /*
+         * A cell that is not in the sheet XML is already blank, so clearing it is a no-op
+         * rather than an error.
+         *
+         * Excel only emits `<c>` elements for cells that hold something, and an untouched
+         * semester block holds almost nothing — clearing one would otherwise throw
+         * MissingCellError and take the whole print down for any learner who has not reached
+         * Grade 12. Writes keep the strict behaviour: there a missing cell means a wrong
+         * address, and failing loudly is the point.
+         */
+        try {
+          xml = setCell(xml, addr, null);
+        } catch (e) {
+          if (!(e instanceof MissingCellError)) throw e;
+        }
+      }
       xml = setCells(xml, this.pending.get(sheet) ?? {});
       this.wb.setSheetXml(sheet, xml);
     }
@@ -148,6 +166,21 @@ export function fillJhs(templatePath: string, record: Sf10Record): Workbook {
       [`${JHS_GENERAL_COL.remark}${genRow}`]: term.promotionRemark,
     };
 
+    /*
+     * A three-period term prints 1 2 3 over the Quarterly Rating span, not 1 2 3 4.
+     *
+     * Clearing the heading is the whole of it — the Q4 cells are already empty, and the
+     * template's `=AVERAGE(AG,AC,Y,U)` ignores blanks, so the final rating is the average of
+     * the three that are there without any formula change. The heading is per block, so a
+     * learner whose Grade 7 ran to four quarters and whose Grade 9 runs to three prints
+     * correctly on one sheet.
+     */
+    if ((term.gradingPeriods ?? 4) < 4) {
+      w.clear(block.sheet, [
+        `${JHS_SUBJECT_COL.q4}${block.headerRow + JHS_OFFSET.quarterHeader}`,
+      ]);
+    }
+
     assertFits(term, JHS_SUBJECT_ROW_COUNT, `Grade ${block.level}`);
     term.subjects.forEach((subject, i) => {
       const row = block.headerRow + JHS_OFFSET.firstSubject + i;
@@ -170,6 +203,62 @@ export function fillJhs(templatePath: string, record: Sf10Record): Workbook {
   w.flush();
   wb.forceFullRecalcOnLoad();
   return wb;
+}
+
+/**
+ * Blank an SHS semester block the learner has no term for.
+ *
+ * Two situations, needing different amounts of clearing.
+ *
+ * **Values, always.** The DepEd template ships with sample data left in the two Grade 11
+ * blocks — a school name, a school year, section `MODESTY`, a `PROMOTED` remark. Until now an
+ * unused block was skipped outright, so printing the form for a learner with only Grade 12
+ * terms put that sample data on their permanent record as if it were theirs.
+ *
+ * **Labels, only past the end of the programme.** A three-semester learner will never have a
+ * fourth semester, so that section is removed rather than left waiting. A Grade 11 learner who
+ * has simply not reached Grade 12 keeps the labels: the block is empty, not absent, and an
+ * unlabelled gap reads as a printing fault.
+ *
+ * Clearing `SEM` also blanks the block's quarter headings, which the template derives from it
+ * with `=IF(BK46="","",...)`. The final grade, action taken and general average cells are
+ * likewise `IF(...="","",...)` and empty themselves. None of them are touched here — they are
+ * formulas, and writing into one is the thing this whole module exists not to do.
+ */
+function clearShsBlock(w: SheetWriter, block: ShsBlock, opts: { labels: boolean }): void {
+  const addrs: string[] = [
+    `${SHS_HEADER_COL.schoolName}${block.headerRow}`,
+    `${SHS_HEADER_COL.schoolId}${block.headerRow}`,
+    `${SHS_HEADER_COL.gradeLevel}${block.headerRow}`,
+    `${SHS_HEADER_COL.schoolYear}${block.headerRow}`,
+    `${SHS_HEADER_COL.semester}${block.headerRow}`,
+    `${SHS_TRACK_COL.trackStrand}${block.trackRow}`,
+    `${SHS_TRACK_COL.section}${block.trackRow}`,
+    `${block.remarksCol}${block.remarksRow}`,
+  ];
+
+  for (let i = 0; i < SHS_SUBJECT_ROW_COUNT; i++) {
+    const row = block.firstSubjectRow + i;
+    addrs.push(
+      `${SHS_SUBJECT_COL.category}${row}`,
+      `${SHS_SUBJECT_COL.name}${row}`,
+      `${SHS_SUBJECT_COL.q1}${row}`,
+      `${SHS_SUBJECT_COL.q2}${row}`,
+    );
+  }
+
+  if (opts.labels) {
+    const rows: [readonly string[], number][] = [
+      [SHS_BLOCK_LABEL_COL.header, block.headerRow],
+      [SHS_BLOCK_LABEL_COL.track, block.trackRow],
+      [SHS_BLOCK_LABEL_COL.columnHeader, block.columnHeaderRow],
+      [SHS_BLOCK_LABEL_COL.generalAverage, block.generalAverageRow],
+      [SHS_BLOCK_LABEL_COL.remarks, block.remarksRow],
+    ];
+    for (const [cols, row] of rows) for (const col of cols) addrs.push(`${col}${row}`);
+  }
+
+  w.clear(block.sheet, addrs);
 }
 
 export function fillShs(templatePath: string, record: Sf10Record): Workbook {
@@ -203,11 +292,22 @@ export function fillShs(templatePath: string, record: Sf10Record): Workbook {
     });
   }
 
-  for (const block of SHS_BLOCKS) {
+  /*
+   * How many semesters this learner's programme runs. Three under the scheme that starts
+   * SY 2026-2027, four before it. It cannot be inferred from the terms present — a Grade 11
+   * learner mid-programme also has no fourth semester — so it is carried on the record.
+   */
+  const semesters = record.shsSemesters ?? SHS_BLOCKS.length;
+
+  for (const [index, block] of SHS_BLOCKS.entries()) {
     const term = record.terms.find(
       (t) => t.level === block.level && t.semester === block.semester,
     );
-    if (!term) continue;
+    if (!term) {
+      // Beyond the programme means the section will never exist, so its labels go too.
+      clearShsBlock(w, block, { labels: index >= semesters });
+      continue;
+    }
 
     const writes: Writes = {
       [`${SHS_HEADER_COL.schoolName}${block.headerRow}`]: term.schoolName,

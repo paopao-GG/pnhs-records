@@ -20,7 +20,13 @@ import { PrintPanel } from "@/app/_components/print-panel.tsx";
 import { Guilloche } from "@/app/_components/guilloche.tsx";
 import { Seal, type SealTone } from "@/app/_components/seal.tsx";
 import { CachedNotice } from "@/app/_components/connection-state.tsx";
-import { exactFinalRating, finalRating, generalAverage, isPassing } from "@/lib/grading.ts";
+import {
+  exactFinalRating,
+  finalRating,
+  generalAverage,
+  isPassing,
+  quarterFieldsFor,
+} from "@/lib/grading.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -184,6 +190,11 @@ function TermCard({
   const showUnits = subjects.some((s) => s.units_earned != null);
   const { isJhs, finals, genAve, passing } = standing(term, subjects);
   const mark = promotionMark(term, passing);
+  /*
+   * Which quarter columns this term actually has. A three-period Grade 9 shows Q1-Q3, and a
+   * Grade 7 encoded before the change still shows four — on the same record.
+   */
+  const quarters = quarterFieldsFor(term);
 
   return (
     // Capped so a learner with six years of records does not crawl in one plate at a time.
@@ -215,10 +226,11 @@ function TermCard({
               <tr>
                 {!isJhs && <th>Type</th>}
                 <th className="subject">{isJhs ? "Learning Area" : "Subject"}</th>
-                <th className="num">Q1</th>
-                <th className="num">Q2</th>
-                {isJhs && <th className="num">Q3</th>}
-                {isJhs && <th className="num">Q4</th>}
+                {quarters.map((q) => (
+                  <th className="num" key={q}>
+                    {q.toUpperCase()}
+                  </th>
+                ))}
                 <th className="final">Final</th>
                 {showUnits && <th className="num">Units</th>}
                 {isOld && <th>Action</th>}
@@ -235,22 +247,11 @@ function TermCard({
                     </td>
                   )}
                   <td className="subject">{s.subject_name}</td>
-                  <td className="num">
-                    <Grade value={s.q1} />
-                  </td>
-                  <td className="num">
-                    <Grade value={s.q2} />
-                  </td>
-                  {isJhs && (
-                    <td className="num">
-                      <Grade value={s.q3} />
+                  {quarters.map((q) => (
+                    <td className="num" key={q}>
+                      <Grade value={s[q]} />
                     </td>
-                  )}
-                  {isJhs && (
-                    <td className="num">
-                      <Grade value={s.q4} />
-                    </td>
-                  )}
+                  ))}
                   <td className="final">
                     <Grade value={finals[i]} />
                   </td>
@@ -269,7 +270,9 @@ function TermCard({
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan={isJhs ? 5 : 4}>
+                {/* Subject column, plus the Type column on SHS, plus however many quarters
+                    this term has. Hard-coding it breaks the moment a term has three. */}
+                <td colSpan={(isJhs ? 1 : 2) + quarters.length}>
                   General Average
                   {term.adviser && (
                     <span className="muted" style={{ fontWeight: 400 }}>

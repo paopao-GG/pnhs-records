@@ -12,6 +12,7 @@ import {
   getOriginalFile,
   getSchoolSettings,
   getStudent,
+  getTermForSubject,
   resolveIssue,
   swapSubjectOrder,
   updateStudent,
@@ -24,8 +25,10 @@ import {
   exactFinalRating,
   finalRating,
   generalAverage,
+  gradingPeriods,
   jhsRemark,
   promotionRemark,
+  quarterFieldsFor,
 } from "@/lib/grading.ts";
 import { jhsFinalRatingIsComputed, jhsLearningAreas } from "@/lib/sf10/jhs-map.ts";
 import { shsSubjectsFor } from "@/lib/sf10/subject-templates.ts";
@@ -189,6 +192,24 @@ export async function saveSubjectField(
     throw new Error(`Grade ${value} is outside 0–100.`);
   }
 
+  /*
+   * Refuse a grade in a quarter this term is not graded over.
+   *
+   * The editor already hides the column, so reaching this needs a tab left open across the
+   * change, or a direct call. Either way the grade would be stored and then never printed —
+   * the form has no fourth-quarter column to put it in — which is a mark that exists in the
+   * system and not on the record. Better to refuse it and say so.
+   */
+  if (value != null && field !== "final_rating") {
+    const term = await getTermForSubject(subjectId);
+    if (term && !quarterFieldsFor(term).includes(field)) {
+      throw new Error(
+        `This term is graded over ${gradingPeriods(term)} quarters, so ${field.toUpperCase()} ` +
+          `cannot be encoded. Reload the page if it is still showing.`,
+      );
+    }
+  }
+
   const { studentId } = await updateSubjectField(subjectId, field, value, user.id);
   if (studentId) revalidatePath(`/students/${studentId}`);
 }
@@ -286,6 +307,12 @@ export interface NewStudentInput {
   section: string;
   adviser: string;
   trackStrand: string;
+  /**
+   * "3" or "4". For a JHS level it is quarter columns on the term; for SHS it is semesters in
+   * the programme, which is stored on the learner. One control, because to a registrar it is
+   * one question — does this record run to three or to four?
+   */
+  periods: string;
 }
 
 /**
@@ -302,6 +329,16 @@ export async function createRecord(input: NewStudentInput): Promise<void> {
   const isJhs = level <= 10;
   const semester = isJhs ? null : Number(input.semester || "1");
 
+  /*
+   * The one control lands in two different places, because it means two different things.
+   *
+   * On a JHS level it is the number of quarter columns, which belongs to the term — a learner
+   * straddles the cutover, with Grade 7 on four and Grade 9 on three. On SHS it is the number
+   * of semesters in the programme, which belongs to the learner, because the semester that
+   * does not exist has no row of its own to be recorded on.
+   */
+  const periods = input.periods === "4" ? 4 : 3;
+
   const studentId = await createStudent({
     lrn: input.lrn.trim(),
     last_name: input.lastName.trim().toUpperCase(),
@@ -310,6 +347,7 @@ export async function createRecord(input: NewStudentInput): Promise<void> {
     name_ext: input.nameExt.trim().toUpperCase() || null,
     sex: input.sex || null,
     birthdate: input.birthdate || null,
+    shs_semesters: isJhs ? null : periods,
   });
 
   await createTerm(
@@ -321,6 +359,8 @@ export async function createRecord(input: NewStudentInput): Promise<void> {
       section: input.section.trim().toUpperCase() || null,
       adviser: input.adviser.trim() || null,
       track_strand: isJhs ? null : input.trackStrand || null,
+      // An SHS semester has two quarters and always did; only JHS carries a period count.
+      grading_periods: isJhs ? periods : null,
     },
     await getSchoolSettings(),
   );

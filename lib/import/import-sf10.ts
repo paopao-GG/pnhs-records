@@ -266,8 +266,8 @@ async function writeRecord(
     const INSERT_TERM = `INSERT INTO enrollment_terms
         (student_id, level, semester, school_year, section, adviser, track_strand,
          school_name, school_id, district, division, region, promotion_remark, general_average,
-         curriculum)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         curriculum, grading_periods)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       RETURNING id`;
     // All four quarters: SHS uses only q1/q2 and leaves the rest null, JHS uses all four.
     // `final_rating` is stored only where the template has no formula for it - JHS Homeroom
@@ -299,6 +299,9 @@ async function writeRecord(
           term.promotionRemark ?? null,
           term.generalAverage ?? null,
           term.curriculum ?? "k12",
+          // Null when the parser could not tell, which leaves the term on the historical
+          // default rather than asserting a period count the form did not state.
+          term.gradingPeriods ?? null,
         ],
       });
       const termId = Number(createdTerm.rows[0].id);

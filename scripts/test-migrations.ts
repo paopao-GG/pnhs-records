@@ -150,6 +150,44 @@ check("adding a column preserves existing rows — the reason this exists", asyn
   db.close();
 });
 
+check("the period columns arrive and leave existing rows meaning what they meant", async () => {
+  /*
+   * Migration 3 against a database that predates it.
+   *
+   * The assertion that matters is the NULL: every term already in the school's database was
+   * graded over four quarters, and nothing backfills them. If `grading_periods` came in with a
+   * default of 3 instead, every record encoded before the change would silently lose its fourth
+   * quarter from the printed form.
+   */
+  const db = scratch();
+  await db.execute(
+    "CREATE TABLE enrollment_terms (id INTEGER PRIMARY KEY, level INTEGER, curriculum TEXT)",
+  );
+  await db.execute("CREATE TABLE students (id INTEGER PRIMARY KEY, lrn TEXT)");
+  await db.execute("INSERT INTO enrollment_terms (level, curriculum) VALUES (7, 'k12')");
+  await db.execute({ sql: "INSERT INTO students (lrn) VALUES (?)", args: ["111798090005"] });
+
+  await withMigrations(db, [
+    {
+      version: 1,
+      name: "three grading periods",
+      up: async (d) => {
+        await addColumnIfMissing(d, "enrollment_terms", "grading_periods", "INTEGER");
+        await addColumnIfMissing(d, "students", "shs_semesters", "INTEGER");
+      },
+    },
+  ]);
+
+  const term = await db.execute("SELECT level, grading_periods FROM enrollment_terms");
+  assert.equal(Number(term.rows[0].level), 7, "the existing term survives");
+  assert.equal(term.rows[0].grading_periods, null, "and is left on the historical default");
+
+  const student = await db.execute("SELECT lrn, shs_semesters FROM students");
+  assert.equal(student.rows[0].lrn, "111798090005");
+  assert.equal(student.rows[0].shs_semesters, null);
+  db.close();
+});
+
 check("addColumnIfMissing skips a table that does not exist yet", async () => {
   // A brand-new database gets the column from schema.sql, so there is nothing to migrate.
   const db = scratch();

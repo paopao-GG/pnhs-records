@@ -9,6 +9,7 @@
 
 import type { Sf10Record, SubjectRecord, TermRecord, Sex } from "../sf10/types.ts";
 import type { ShsCategory } from "../sf10/shs-map.ts";
+import { gradingPeriods, shsSemesters } from "../grading.ts";
 import {
   getEligibility,
   getStudent,
@@ -57,6 +58,9 @@ function toTerm(row: TermRow, subjects: SubjectRow[]): TermRecord {
     division: nullToUndefined(row.division),
     region: nullToUndefined(row.region),
     promotionRemark: nullToUndefined(row.promotion_remark),
+    // Resolved here rather than passed through raw, so the exporter never has to know what a
+    // null means. See gradingPeriods() in lib/grading.ts.
+    gradingPeriods: gradingPeriods(row),
     subjects: subjects.map(toSubject),
   };
 }
@@ -112,7 +116,11 @@ export async function buildSf10Record(
 
   const el = await getEligibility(studentId, form);
 
-  const record: Sf10Record = { student: toStudent(student), terms };
+  const record: Sf10Record = {
+    student: toStudent(student),
+    terms,
+    shsSemesters: shsSemesters(student),
+  };
 
   if (el && form === "jhs") {
     record.jhsEligibility = {

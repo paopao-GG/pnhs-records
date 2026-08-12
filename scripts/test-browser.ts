@@ -93,11 +93,16 @@ function ok(name: string, condition: boolean, detail = ""): void {
 // ---------------------------------------------------------------------------
 
 /**
- * One learner with two JHS terms.
+ * One learner with two JHS terms, deliberately graded differently.
  *
  * Two, not one, so the term-boundary check has a boundary to fail against — with a single term
  * the "down arrow does not cross into the next year" assertion would pass no matter what the
- * code did. JHS rather than SHS because it carries four quarter columns instead of two.
+ * code did.
+ *
+ * Grade 7 runs to four quarters and Grade 8 to three, which is the record a learner who
+ * straddles the SY 2026-2027 change actually has. It is also the shape most likely to break:
+ * the two grids sit on one page with different column counts, and the keyboard navigation
+ * addresses cells by column index.
  */
 async function seed(): Promise<void> {
   const db = getClient();
@@ -130,6 +135,8 @@ async function seed(): Promise<void> {
         section: "Sampaguita",
         adviser: null,
         track_strand: null,
+        // Grade 7 on the old four quarters, Grade 8 on the new three.
+        grading_periods: level === 7 ? 4 : 3,
       },
       {},
     );
@@ -295,6 +302,29 @@ async function run(): Promise<void> {
   ok("movement stops at the term boundary", (await focusedCell()) === "3,0");
   const gridCount = await grids.count();
   ok("the fixture really does have a second term to cross into", gridCount === 2);
+
+  /*
+   * Three grading periods on one term and four on the other, on one page.
+   *
+   * The counts are read off the rendered grid rather than from the fixture, so this fails if
+   * the column count ever stops following the term's own `grading_periods`.
+   */
+  const quartersIn = async (grid: typeof firstGrid) =>
+    (await grid.locator("tbody tr").first().locator(".grade-input").count()) -
+    (await grid.locator("tbody tr").first().locator("td.final .grade-input").count());
+
+  ok("the four-period term shows four quarter columns", (await quartersIn(firstGrid)) === 4);
+  ok(
+    "the three-period term on the same page shows three",
+    (await quartersIn(grids.nth(1))) === 3,
+    `saw ${await quartersIn(grids.nth(1))}`,
+  );
+
+  // Column 3 does not exist in the three-period grid, so focus walks left to the last one that
+  // does rather than going nowhere.
+  await grids.nth(1).locator('[data-cell="0,2"]').focus();
+  await page.keyboard.press("ArrowDown");
+  ok("navigation works in the three-period grid too", (await focusedCell()) === "1,2");
 
   // --- autosave shows itself in the cell ----------------------------------
   await cell(firstGrid, 0, 0).fill("91");

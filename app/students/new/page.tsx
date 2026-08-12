@@ -18,9 +18,13 @@ export default async function NewStudentPage() {
         </div>
       </div>
 
+      {/* This used to say the term arrives pre-filled with the standard subjects. It has not
+          done that since subjects became one-at-a-time — createRecord() opens the term empty. */}
       <div className="notice">
-        Creating a record also opens its first enrolment term, pre-filled with that grade
-        level&rsquo;s standard subjects. Further years can be added afterwards.
+        Creating a record also opens its first enrolment term, with no subjects yet — add them
+        one at a time in the editor. Further years can be added afterwards.{" "}
+        <strong>Grading periods</strong> is three from SY 2026&ndash;2027; choose four when
+        back-encoding an earlier year.
       </div>
 
       <NewStudentForm />

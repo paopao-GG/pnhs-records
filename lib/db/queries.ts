@@ -57,6 +57,8 @@ export interface StudentRow {
   guardian_name: string | null;
   guardian_occupation: string | null;
   guardian_address: string | null;
+  /** Semesters in the SHS programme: 3 under the new scheme. Null means four. */
+  shs_semesters: number | null;
 }
 
 export interface TermRow {
@@ -78,6 +80,13 @@ export interface TermRow {
   general_average: number | null;
   /** 'k12' or 'old' (Form 137's First-Fourth Year). */
   curriculum: string | null;
+  /**
+   * Quarter columns this term is graded over. Null means the historical default.
+   *
+   * Resolve it with `gradingPeriods()` from lib/grading.ts rather than reading it here — the
+   * null fallback is what keeps every record encoded before the change printing correctly.
+   */
+  grading_periods: number | null;
 }
 
 export interface SubjectRow {
@@ -339,6 +348,27 @@ export async function getHistoryForStudent(studentId: number, limit = 50): Promi
  * Autosave calls this per field rather than saving the whole record, so two people editing
  * different subjects do not overwrite each other, and the history shows exactly what moved.
  */
+/**
+ * The level and period count of the term a subject belongs to.
+ *
+ * Just the two columns `gradingPeriods()` needs, rather than the whole term: this runs on every
+ * grade write, and the encoding grid writes one per cell.
+ */
+export async function getTermForSubject(
+  subjectId: number,
+): Promise<{ level: number; grading_periods: number | null } | null> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT t.level, t.grading_periods
+            FROM term_subjects s
+            JOIN enrollment_terms t ON t.id = s.term_id
+           WHERE s.id = ?`,
+    args: [subjectId],
+  });
+  const row = result.rows[0];
+  return row ? plain<{ level: number; grading_periods: number | null }>(row) : null;
+}
+
 export async function updateSubjectField(
   subjectId: number,
   field: "q1" | "q2" | "q3" | "q4" | "final_rating",
@@ -539,13 +569,16 @@ export async function createStudent(fields: {
   name_ext: string | null;
   sex: string | null;
   birthdate: string | null;
+  /** Semesters in the SHS programme. Omit or pass null for the pre-2026 four. */
+  shs_semesters?: number | null;
 }): Promise<number> {
   const db = await getDb();
   // RETURNING rather than last_insert_rowid(): that function reports the last write on the
   // connection, which is not a safe assumption once connections are pooled and shared.
   const result = await db.execute({
-    sql: `INSERT INTO students (lrn, last_name, first_name, middle_name, name_ext, sex, birthdate)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+    sql: `INSERT INTO students
+            (lrn, last_name, first_name, middle_name, name_ext, sex, birthdate, shs_semesters)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           RETURNING id`,
     args: [
       fields.lrn,
@@ -555,6 +588,7 @@ export async function createStudent(fields: {
       fields.name_ext,
       fields.sex,
       fields.birthdate,
+      fields.shs_semesters ?? null,
     ],
   });
   return Number(result.rows[0].id);
@@ -569,6 +603,8 @@ export async function createTerm(
     section: string | null;
     adviser: string | null;
     track_strand: string | null;
+    /** Quarter columns for this term. Omit or pass null for the historical default. */
+    grading_periods?: number | null;
   },
   school: Record<string, string>,
 ): Promise<number> {
@@ -576,8 +612,8 @@ export async function createTerm(
   const result = await db.execute({
     sql: `INSERT INTO enrollment_terms
             (student_id, level, semester, school_year, section, adviser, track_strand,
-             school_name, school_id, district, division, region)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             grading_periods, school_name, school_id, district, division, region)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           RETURNING id`,
     args: [
       studentId,
@@ -587,6 +623,7 @@ export async function createTerm(
       term.section,
       term.adviser,
       term.track_strand,
+      term.grading_periods ?? null,
       school.school_name ?? null,
       school.school_id ?? null,
       school.district ?? null,

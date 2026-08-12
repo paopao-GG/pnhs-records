@@ -88,6 +88,33 @@ export const MIGRATIONS: Migration[] = [
       await addColumnIfMissing(db, "import_files", "stored_path", "TEXT");
     },
   },
+  {
+    version: 3,
+    name: "three grading periods",
+    up: async (db) => {
+      /*
+       * From SY 2026-2027 the school grades over three periods rather than four, and the two
+       * forms are affected in different places: a JHS grade level loses its fourth quarter
+       * column, and the SHS programme runs three semester blocks instead of four.
+       *
+       * Both columns are NULLABLE WITH NO BACKFILL, and that is the whole point. Every row
+       * already in this database was graded under the old scheme, so NULL has to keep meaning
+       * exactly what those rows already mean. `gradingPeriods()` in lib/grading.ts resolves it,
+       * and nothing reads the raw column.
+       *
+       * `grading_periods` is per TERM because a learner straddles the cutover - Grade 7 and 8
+       * under four quarters, Grade 9 under three, on one permanent record. A global setting
+       * would rewrite history for every earlier year the moment it was flipped.
+       *
+       * `shs_semesters` is per STUDENT because it describes the programme rather than a term: a
+       * three-semester learner has no Grade 12 2nd Semester at all, so there is no row to hang
+       * it on. It also cannot be inferred on import - an empty fourth block is indistinguishable
+       * from a Grade 11 learner who has not reached Grade 12 yet.
+       */
+      await addColumnIfMissing(db, "enrollment_terms", "grading_periods", "INTEGER");
+      await addColumnIfMissing(db, "students", "shs_semesters", "INTEGER");
+    },
+  },
 ];
 
 /**

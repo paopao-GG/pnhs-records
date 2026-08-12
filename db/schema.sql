@@ -36,6 +36,10 @@ CREATE TABLE IF NOT EXISTS students (
   guardian_name        TEXT,
   guardian_occupation  TEXT,
   guardian_address     TEXT,
+  -- Semesters in this learner's SHS programme: 3 under the new scheme, 4 before it. NULL means
+  -- four. Per learner rather than per term because it describes the programme - a three-semester
+  -- learner has no Grade 12 2nd Semester row for it to live on.
+  shs_semesters        INTEGER,
   created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
   updated_at   TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -94,6 +98,10 @@ CREATE TABLE IF NOT EXISTS enrollment_terms (
   -- 'k12' for Grade 7-12 records; 'old' for Form 137's First-Fourth Year. Levels 7-10 are
   -- reused for the old curriculum so existing queries work, and this carries the truth.
   curriculum        TEXT    NOT NULL DEFAULT 'k12',
+  -- How many quarter columns this term is graded over. NULL means the historical default -
+  -- four for JHS, two for SHS - so rows encoded before the three-period change keep meaning
+  -- what they always meant. Resolve it with gradingPeriods() in lib/grading.ts, never directly.
+  grading_periods   INTEGER,
   UNIQUE (student_id, level, semester)
 );
 

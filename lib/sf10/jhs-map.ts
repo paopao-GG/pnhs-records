@@ -63,6 +63,15 @@ export const JHS_BLOCKS: readonly JhsBlock[] = [
 export const JHS_OFFSET = {
   school: 0,
   classInfo: 1,
+  /**
+   * The row numbering the quarters: literal `1 2 3 4` in the four quarter columns.
+   *
+   * It is per block, which is what makes a mixed record possible — Grade 7 can keep its four
+   * quarters while Grade 9 shows three, on the same sheet. It is also the discriminator the
+   * importer uses: a form issued under the three-period scheme has no `4` here, and that is a
+   * property of the blank form rather than of how far someone got encoding it.
+   */
+  quarterHeader: 4,
   firstSubject: 5,
   generalAverage: 19,
   remedialHeader: 21,

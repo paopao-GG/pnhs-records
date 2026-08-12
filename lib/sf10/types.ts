@@ -93,6 +93,15 @@ export interface TermRecord extends SchoolInfo {
   curriculum?: "k12" | "old";
   /** How the source document names this year, e.g. "First Year". */
   yearLabel?: string;
+  /**
+   * Quarter columns this term is graded over — 3 under the scheme that starts SY 2026-2027,
+   * 4 before it, 2 for an SHS semester.
+   *
+   * Absent means the historical default for the level. On import it is read from the form's own
+   * quarter-header row rather than from which quarters happen to be filled, because a
+   * four-quarter record encoded in November has an empty Q4 too.
+   */
+  gradingPeriods?: number;
 }
 
 export interface JhsEligibility {
@@ -128,6 +137,14 @@ export interface Sf10Record {
   jhsEligibility?: JhsEligibility;
   shsEligibility?: ShsEligibility;
   terms: TermRecord[];
+  /**
+   * Semesters in the learner's SHS programme: 3 under the new scheme, 4 before it.
+   *
+   * Absent means four. On the printed form this decides whether the unused fourth semester
+   * block is cleared or left as an empty section — it cannot be inferred from the terms
+   * present, because a Grade 11 learner mid-programme also has no fourth semester.
+   */
+  shsSemesters?: number;
 }
 
 export function fullName(s: StudentIdentity): string {
