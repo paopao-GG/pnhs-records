@@ -38,6 +38,21 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // Everything except Next's own assets and the favicon.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  /*
+   * Everything except Next's own assets and the static files under public/.
+   *
+   * The `public/` exclusions are not cosmetic. A stylesheet's `@font-face` request and a
+   * `<link rel="preload" crossorigin>` are both *anonymous* fetches: the browser sends no
+   * cookie, so this middleware saw no session and redirected all six woff2 files to /login —
+   * for signed-in users too. The browser then received an HTML page where it expected a font,
+   * reported "OTS parsing error: invalid sfntVersion" (that number is the ASCII of `<!DO`),
+   * and fell back to Segoe UI and Constantia. The self-hosted typefaces have never once been
+   * the faces on screen. `<link rel="manifest">` is fetched the same way, which took the PWA
+   * metadata with it.
+   *
+   * Nothing here is a leak: these are the typefaces, the app's name and colours, and the
+   * service worker's own source. None of it is learner data, and the real check has always
+   * been `requireUser()` in the page — see the note at the top of this file.
+   */
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|fonts/|manifest.webmanifest|sw.js).*)"],
 };

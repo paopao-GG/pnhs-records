@@ -602,15 +602,14 @@ and it is still unwritten because the feature is unbuilt.
 
 ### `npm run test:browser`
 
-Twenty-one checks covering what no amount of `fetch` can see. It runs Chrome through Playwright
+Thirty-six checks covering what no amount of `fetch` can see. It runs Chrome through Playwright
 via `channel: "chrome"` — the browser already on the machine, because Playwright's own Chromium
 download is a few hundred megabytes and is what failed when this was first attempted. It builds
 its own scratch database and starts its own dev server against it, rather than accepting a URL
 the way `smoke.ts` does: these checks type into grade cells, and a server someone else started
 is a server pointing at who-knows-what.
 
-Three of the checks exist because the redesign shipped them broken and a screenshot pass caught
-them by eye:
+Most of these exist because something shipped broken and was caught by eye rather than by a test:
 
 - **Arrow keys must not change a grade.** On `<input type="number">` the up and down arrows
   increment the value. The encoding grid binds them to movement, so a stray keypress over a mark
@@ -619,6 +618,17 @@ them by eye:
 - **The offline lock must release itself** without a reload. See §5a.
 - **Vertical movement must stop at the term boundary** — holding ↓ past the last subject of
   Grade 7 must not land in Grade 8.
+- **The typefaces must actually load.** They did not, for months, and a screenshot pass did *not*
+  catch it. `@font-face` requests and `<link rel="preload" crossorigin>` are anonymous — no
+  cookie — so `middleware.ts` saw no session and redirected all six woff2 files to `/login`, for
+  signed-in users too. The browser received an HTML page where it expected a font and fell back
+  to Segoe UI and Constantia, which look close enough to pass a glance. The matcher now excludes
+  `fonts/`, `manifest.webmanifest` and `sw.js`; the check asserts `document.fonts.check()`, which
+  reports a face as usable rather than merely mentioned. The same redirect was silently costing
+  the PWA its manifest.
+- **Light must be the default even on a dark machine**, the switch must persist across a reload,
+  and `data-theme` must be on `<html>` at `commit` — the last one is what proves the inline
+  script beats the first paint, so a dark-mode user never gets a white flash. See §9.
 
 `npm test` stays as it was: unit checks only, no server, fast. `test:browser` is separate for the
 same reason `smoke` is — it needs something running.
@@ -627,35 +637,57 @@ same reason `smoke` is — it needs something running.
 
 ## 9. The frontend
 
-Redesigned in August 2026. The previous interface was a warm manila "filing room" aesthetic; the
-current one is **"Engraved Registry"** — the app should look like the security document it
-produces rather than the cabinet it replaced.
+Redesigned twice. August 2026 replaced a warm manila "filing room" aesthetic with **"Engraved
+Registry"** — sharp corners, engraved double rules, intaglio grain, Fraunces at display sizes —
+on the premise that the app should look like the security document it produces. That premise was
+right about the document and wrong about the room. The registrar is in front of this for whole
+afternoons; a security engraving is a tiring thing to sit inside.
 
-Recorded here because the next person to touch it will otherwise re-litigate three decisions.
+The current interface is **"Soft Office"**. Same information, same density where density matters,
+but the furniture recedes: white plates on warm paper, generous corners, soft light instead of
+rules. The record is still a security document — the guilloche and the seal survive — it just
+stops announcing it on every plate.
+
+Recorded here because the next person to touch it will otherwise re-litigate five decisions.
 
 ### The system
 
 `app/globals.css` is the whole design system — plain CSS, custom properties, `data-*` variants.
 No Tailwind, no CSS modules, no component library. About seventy class names are the contract
-between it and the markup.
+between it and the markup, and `scripts/test-browser.ts` asserts on a dozen of them, so a
+restyle is a token-and-property job rather than a re-markup.
 
-- **Palette.** A cool oyster ground with exactly two accents carrying the load: **verdigris**
-  for affirmative and navigational states, **brass** for pending and advisory. **Vermilion**
-  appears *only* for destruction and failing marks — that scarcity is the entire reason it reads
-  as a warning. Full dark palette, defined rather than filtered.
-- **Type.** Fraunces (display), Atkinson Hyperlegible (all UI text, drawn for low-vision
-  legibility — not a niche concern in an office reading names and six-digit numbers all day),
-  IBM Plex Mono (tabular, for grades and LRNs). All three OFL and **self-hosted**; see
-  `public/fonts/README.txt`.
+- **Palette.** Warm paper ground (`--ground`) under white plates (`--plate`). One `--accent`
+  carries navigation and affirmation, `--advisory` covers pending and imported states, and
+  `--alert` appears *only* for destruction and failing marks — that scarcity is the entire
+  reason it reads as a warning. `--accent` and `--accent-solid` are separate values in light
+  mode because the shade that clears 4.5:1 as 13px type is darker than the one that looks right
+  as a block of button. Full dark palette, defined rather than filtered.
+- **Geometry.** Four radii (`--radius` 10px plates, `--radius-sm` 6px controls, `--radius-xs`
+  4px cells, `--radius-pill` for every chip). Plates are lit, not outlined: a hairline plus two
+  soft shadow layers. Focus is a 3px halo (`--ring`) rather than a hard offset outline.
+- **Type.** Atkinson Hyperlegible sets all UI text *and all headings* — drawn for low-vision
+  legibility, which is not a niche concern in an office reading names and six-digit numbers all
+  day, and its round open letterforms are the single biggest reason this reads as soft. Fraunces
+  survives in exactly two places, the masthead wordmark and the learner's name on the rail: the
+  institution and the person. IBM Plex Mono, tabular, for grades and LRNs. All three OFL and
+  **self-hosted**; see `public/fonts/README.txt`.
 - **Composition.** The record page is a sticky identity rail beside a scrolling column of term
   plates, so the learner's name and seal stay on screen while six years of terms move past.
 
-### Three decisions worth not re-opening
+### Five decisions worth not re-opening
+
+The first three survive the restyle untouched — they were never about how it looked.
 
 1. **Fonts are self-hosted, not linked.** The app has to render with no network — that was true
    when it ran on the registrar's PC and it is true again now that offline is a feature. A font
    CDN would defeat the service worker's precache and would also put a third party on the
    request path of a page showing a child's personal data.
+   *The trap:* self-hosting puts the typefaces behind `middleware.ts`, and font requests carry no
+   cookie, so for months the middleware redirected all six to `/login` and every screen silently
+   rendered in Segoe UI. The matcher now excludes `fonts/`; §8 has the full account and the
+   regression check. Anything else added under `public/` that the browser fetches anonymously
+   needs the same exclusion.
 2. **Grade-cell save state lives in the cell**, as an underline that fills, not in a floating
    indicator. This is the hook #8 attaches to: §5 requires versioning per `term_subjects` row,
    so one subject can be in conflict while thirty-nine are fine, and a single global indicator
@@ -665,6 +697,22 @@ between it and the markup.
    immediately — the plate said "Incomplete" where the seal said "Not stated" about the same
    term. A permanent record that describes itself two ways on one screen is one nobody should
    trust.
+4. **Light is the default and the OS preference is not consulted.** There is no
+   `prefers-color-scheme` block in `globals.css`; dark is reached only through the masthead
+   toggle, which writes `data-theme` onto `<html>`. Following the OS instead would mean a laptop
+   that dims itself in the evening hands its user a different-looking app than the machine
+   beside it — on shared office PCs the surprise costs more than the convenience. The toggle
+   sits *outside* the signed-in block in `app/layout.tsx`, so it is reachable on the sign-in
+   page too; someone who works in the dark should not have to log in first to turn the lights
+   down.
+5. **The theme lives in `localStorage`, not a cookie.** It is a display preference, it never
+   needs to reach the server, and keeping it out of the cookie jar means signing out — which
+   purges the service worker's page cache, see §5a — does not also reset how the app looks for
+   the next person to sit down. A blocking inline script (`THEME_SCRIPT` in
+   `app/_components/theme-toggle.tsx`) applies it in `<head>` before first paint; an effect
+   cannot, because the root layout is a server component and dark users would see a white flash
+   on every navigation. `next.config.mjs` sets no `script-src`, so it needs no nonce — if a CSP
+   is ever tightened, that script is the thing that breaks.
 
 ### Not built
 

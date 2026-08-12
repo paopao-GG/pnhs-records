@@ -373,7 +373,98 @@ async function run(): Promise<void> {
     await page.locator(".grade-input").first().isEnabled(),
   );
 
+  /*
+   * --- the typefaces actually arrive --------------------------------------
+   *
+   * This is here because they did not, for months, and nothing noticed. A stylesheet's
+   * `@font-face` request and a `<link rel="preload" crossorigin>` are anonymous — no cookie —
+   * so `middleware.ts` saw no session and redirected all six woff2 files to /login, for signed-in
+   * users too. The browser got an HTML page where it expected a font and quietly fell back to
+   * Segoe UI, which looks close enough that a screenshot pass does not catch it.
+   *
+   * `document.fonts.check` is the assertion that would have: it reports whether a face is loaded
+   * and usable, not merely whether a rule mentioning it was parsed. It runs on the editor rather
+   * than on /login because a face the page has no text for is never fetched at all — and the
+   * editor is the one screen that sets all three: the masthead in Fraunces, its own chrome in
+   * Atkinson, every grade cell in Plex Mono.
+   */
+  await page.evaluate(() => document.fonts.ready);
+  for (const [label, face] of [
+    ["Atkinson", '400 15px "Atkinson"'],
+    ["Fraunces", '600 17px "Fraunces"'],
+    ["Plex Mono", '400 13px "Plex Mono"'],
+  ] as const) {
+    ok(
+      `${label} is loaded, not silently falling back`,
+      await page.evaluate((f: string) => document.fonts.check(f), face),
+    );
+  }
+
   await context.close();
+
+  /*
+   * The redirect itself, from a context with no session. `context.request`, not `page.goto`:
+   * navigating to a woff2 makes the browser start a download rather than a navigation.
+   */
+  const fontCtx = await browser.newContext();
+  const fontRes = await fontCtx.request.get(`${BASE}/fonts/atkinson-400-latin.woff2`);
+  ok(
+    "a signed-out request for a typeface is not redirected to sign-in",
+    fontRes.status() === 200 && fontRes.headers()["content-type"] === "font/woff2",
+    `status ${fontRes.status()}, type ${fontRes.headers()["content-type"]}`,
+  );
+  await fontCtx.close();
+
+  /*
+   * --- the light/dark switch ----------------------------------------------
+   *
+   * Light is the default and the OS is not consulted, so this context deliberately declares
+   * `colorScheme: "dark"`: a machine set to dark must still open the app in light.
+   */
+  const themeCtx = await browser.newContext({ colorScheme: "dark" });
+  const themePage = await themeCtx.newPage();
+  const themeOf = () =>
+    themePage.evaluate(() => ({
+      attr: document.documentElement.dataset.theme ?? "",
+      bg: getComputedStyle(document.body).backgroundColor,
+    }));
+
+  await themePage.goto(`${BASE}/login`, { waitUntil: "networkidle" });
+  const fresh = await themeOf();
+  ok("a first visit is light even on a dark machine", fresh.attr === "", `data-theme=${fresh.attr}`);
+
+  // The switch lives outside the signed-in block, so sign-in has it too.
+  ok("the switch is on the sign-in page", await themePage.isVisible(".theme-toggle"));
+
+  await themePage.click(".theme-toggle");
+  const flipped = await themeOf();
+  ok("pressing it turns the app dark", flipped.attr === "dark", `data-theme=${flipped.attr}`);
+  ok("the ground really repaints", flipped.bg !== fresh.bg, `still ${flipped.bg}`);
+
+  await themePage.reload({ waitUntil: "networkidle" });
+  const remembered = await themeOf();
+  ok("the choice survives a reload", remembered.attr === "dark");
+  ok(
+    "and the browser chrome follows it",
+    (await themePage.getAttribute('meta[name="theme-color"]', "content")) !== "#ffffff",
+  );
+
+  /*
+   * The reason the theme script is inline and blocking rather than an effect. At `commit` the
+   * document has barely started parsing; if the attribute is already there, the first paint is
+   * dark and a dark-mode user never sees a white flash on navigation.
+   */
+  const early = await themeCtx.newPage();
+  await early.goto(`${BASE}/login`, { waitUntil: "commit" });
+  ok(
+    "the theme is applied before the page paints",
+    (await early.evaluate(() => document.documentElement.dataset.theme ?? "")) === "dark",
+  );
+
+  await themePage.click(".theme-toggle");
+  await themePage.reload({ waitUntil: "networkidle" });
+  ok("and it switches back", (await themeOf()).attr === "light");
+  await themeCtx.close();
 
   // --- reduced motion -----------------------------------------------------
   const still = await browser.newContext({ reducedMotion: "reduce" });

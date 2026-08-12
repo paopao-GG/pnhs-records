@@ -11,6 +11,10 @@ import type { MetadataRoute } from "next";
  * fall back to a screenshot of the page, which is honest, whereas an invented crest on a
  * government record system is a claim the school did not make. Add the real DepEd/school seal
  * here when someone supplies the artwork.
+ *
+ * The colours below are the light palette's --ground and --plate. A manifest is read once at
+ * install time and cannot follow the in-app toggle, so it states the default the app actually
+ * starts in rather than guessing at the OS.
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
@@ -19,8 +23,8 @@ export default function manifest(): MetadataRoute.Manifest {
     description: "SF10 permanent record system for Pantao National High School",
     start_url: "/",
     display: "standalone",
-    background_color: "#eceae4",
-    theme_color: "#f8f7f4",
+    background_color: "#f4f2ee",
+    theme_color: "#ffffff",
     orientation: "any",
   };
 }

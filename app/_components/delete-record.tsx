@@ -99,7 +99,7 @@ export function DeleteRecord({
         >
           Cancel
         </button>
-        {error && <span style={{ color: "var(--seal)" }}>{error}</span>}
+        {error && <span style={{ color: "var(--alert)" }}>{error}</span>}
       </div>
     </div>
   );

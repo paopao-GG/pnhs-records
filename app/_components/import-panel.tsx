@@ -221,7 +221,7 @@ export function ImportPanel() {
                 Clear
               </button>
             )}
-            {error && <span style={{ color: "var(--seal)" }}>{error}</span>}
+            {error && <span style={{ color: "var(--alert)" }}>{error}</span>}
           </div>
 
           {progress && (

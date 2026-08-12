@@ -1,18 +1,20 @@
 /*
- * PNHS Records — "Engraved Registry" design system.
+ * PNHS Records — "Soft Office" design system.
  *
- * The premise: this app should look like the security document it produces, not like the
- * filing cabinet it replaced. Engraved-plate typography, guilloche watermark, a struck seal
- * instead of a rubber stamp, and a grade grid that reads as a printed ledger plate but
- * behaves like a spreadsheet.
+ * The premise: this is the room the record is kept in, not the record itself. A registrar sits
+ * in front of this for whole afternoons, so the interface is calm, low-contrast and roomy —
+ * white plates resting on warm paper, generous corners, soft light instead of engraved rules.
  *
- * Two rules constrain every choice here:
+ * Three rules constrain every choice here:
  *
- * 1. NOTHING IS FETCHED AT RUNTIME. Fonts are self-hosted in /public/fonts and textures are
- *    inline data URIs. The app has to render identically with no network, because offline is
+ * 1. NOTHING IS FETCHED AT RUNTIME. Fonts are self-hosted in /public/fonts and there are no
+ *    image dependencies. The app has to render identically with no network, because offline is
  *    a feature and not an accident.
  * 2. NUMBERS WIN. Wherever a grade, an LRN or a count is shown, legibility and tabular
- *    alignment beat every other consideration. The registrar reads this grid for hours.
+ *    alignment beat every other consideration. Softening the palette stops at the grid: the
+ *    ledger keeps full contrast while the furniture around it recedes.
+ * 3. LIGHT IS THE DEFAULT. Dark is opt-in through the masthead toggle and nothing else — see
+ *    the note above the token block.
  */
 
 /* ==========================================================================
@@ -20,8 +22,9 @@
    ========================================================================== */
 
 /*
- * Fraunces — display. A variable face with an optical-size axis, which is what gives headings
- * their engraved weight at large sizes without turning spindly at small ones. Latin subset.
+ * Fraunces — display, and now used in exactly two places: the masthead wordmark and the
+ * learner's name on the record rail. It carries the institution and the person; everything
+ * else that used to be set in it now reads too formal for a working screen.
  */
 @font-face {
   font-family: "Fraunces";
@@ -35,9 +38,10 @@
 }
 
 /*
- * Atkinson Hyperlegible — every word of UI text. Drawn by the Braille Institute to keep
- * characters distinguishable for low-vision readers, which is not a niche concern in an
- * office where staff read names and six-digit numbers all day.
+ * Atkinson Hyperlegible — every word of UI text, and now every heading too. Drawn by the
+ * Braille Institute to keep characters distinguishable for low-vision readers, which is not a
+ * niche concern in an office where staff read names and six-digit numbers all day. Its round,
+ * open letterforms are also the single biggest reason this redesign reads as soft.
  */
 @font-face {
   font-family: "Atkinson";
@@ -106,107 +110,117 @@
    2. Tokens
    ========================================================================== */
 
+/*
+ * There is no `prefers-color-scheme` block in this file, and that is deliberate.
+ *
+ * Light is the default for everyone, and dark is reached only by pressing the masthead toggle,
+ * which writes `data-theme` onto <html> and remembers it in localStorage. Following the OS
+ * instead would mean a registrar on a laptop that dims itself in the evening gets a different
+ * app than the one beside her — on a shared machine in a shared office, the surprise is worse
+ * than the convenience. One default, one switch, one place the answer is stored.
+ */
 :root {
+  color-scheme: light;
+
   --font-display: "Fraunces", Constantia, Cambria, Georgia, serif;
   --font-ui: "Atkinson", "Atkinson Fallback", Corbel, "Segoe UI", sans-serif;
   --font-mono: "Plex Mono", "Plex Fallback", Consolas, "Courier New", monospace;
 
-  /* --- Ground. Cool oyster rather than warm manila: this is a plate, not a folder. --- */
-  --ground: #eceae4;
-  --plate: #f8f7f4;
-  --plate-2: #f1efe9;
-  --recess: #e2e0d8;
+  /* --- Ground. Warm paper under white plates: a desk, not a vault. --- */
+  --ground: #f4f2ee;
+  --plate: #ffffff;
+  --plate-2: #faf9f6;
+  --recess: #edebe6;
+  /* A single soft light source at the top of the page, so the ground is not a flat fill. */
+  --wash: #ffffff;
 
-  --ink: #14181c;
-  --ink-2: #4a5359;
-  --ink-3: #838b90;
+  --ink: #262b30; /* soft charcoal, never black */
+  --ink-2: #5b646b;
+  /*
+   * The eyebrows, column heads and count lines. Tuned to clear 4.5:1 against the *ground*, not
+   * just against a white plate — .eyebrow and .count-line sit directly on the page, and the
+   * lighter shade this palette started with cleared the plate and quietly failed the ground.
+   */
+  --ink-3: #676f76;
 
   /*
-   * Two accents carry the entire palette. Verdigris is every affirmative and navigational
-   * state; brass is every pending, imported or advisory state. Vermilion appears ONLY for
-   * destruction and failing marks — that scarcity is the whole reason it reads as a warning.
+   * One accent carries navigation and affirmation. Advisory covers pending, imported and
+   * partial states; alert appears ONLY for destruction and failing marks — that scarcity is
+   * the whole reason it reads as a warning.
+   *
+   * --accent is the text-safe value and --accent-solid the fill; they differ in light mode
+   * because the shade that clears 4.5:1 as 13px type is darker than the one that looks right
+   * as a 40px block of button.
    */
-  --verdigris: #17564f;
-  --verdigris-tint: #e2ebe8;
-  --verdigris-edge: #2c7d72;
-  --brass: #8a6318;
-  --brass-tint: #f2ead6;
-  --vermilion: #9c2b1d;
-  --vermilion-tint: #f6e6e2;
+  --accent: #2f6a61;
+  --accent-solid: #3d7d72;
+  --accent-tint: #e8f1ef;
+  --accent-edge: #4a8b80;
+  --advisory: #7d5f24;
+  --advisory-tint: #f7efdd;
+  --alert: #a9463a;
+  --alert-tint: #f9e9e5;
+  /* The label on an accent fill. Inverts with the fill, which is why it is a token now. */
+  --on-accent: #ffffff;
 
-  --rule: #d9d6cc;
-  --rule-2: #b3aea0;
+  --rule: #e6e3dd;
+  --rule-2: #d3cfc6;
 
   /*
-   * Plates sit on the ground with a hairline and the barest lift. An engraved plate is not a
-   * floating card — the shadow states "resting on", never "hovering above".
+   * Plates are lit rather than outlined. Two layers each: a tight contact shadow that seats the
+   * plate on the ground, and a wide soft one that gives it air. Both are barely there — this
+   * is an office under fluorescent light, not a product page.
    */
-  --shadow-plate: 0 1px 0 rgba(20, 24, 28, 0.04), 0 1px 3px -1px rgba(20, 24, 28, 0.1);
-  --shadow-lift: 0 2px 4px -2px rgba(20, 24, 28, 0.16), 0 12px 28px -18px rgba(20, 24, 28, 0.4);
-  --shadow-inset: inset 0 1px 2px rgba(20, 24, 28, 0.07);
+  --shadow-plate: 0 1px 2px rgba(30, 32, 36, 0.04), 0 4px 12px -6px rgba(30, 32, 36, 0.1);
+  --shadow-lift: 0 2px 6px -2px rgba(30, 32, 36, 0.1), 0 18px 40px -20px rgba(30, 32, 36, 0.28);
+  --shadow-inset: inset 0 1px 2px rgba(30, 32, 36, 0.04);
+  /* Focus is a soft halo plus a solid edge, rather than a hard ring standing off the control. */
+  --ring: 0 0 0 3px color-mix(in srgb, var(--accent-edge) 30%, transparent);
 
-  --radius: 2px;
+  --radius: 10px; /* plates, notices, popovers, wells */
+  --radius-sm: 6px; /* buttons, inputs, selects */
+  --radius-xs: 4px; /* grade cells, progress, tiny controls */
+  --radius-pill: 999px; /* chips, connection state, role tag */
+
   --rail: 300px;
   --measure: 1320px;
 }
 
 /*
  * "After hours." A full palette, not a filter over the light one — the accents lighten and
- * desaturate because a dark ground makes saturated colour shout.
+ * desaturate because a dark ground makes saturated colour shout, and the ground itself stops
+ * well short of black so the plates have somewhere to sit.
  */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --ground: #0d1114;
-    --plate: #141a1e;
-    --plate-2: #192025;
-    --recess: #0a0e10;
-
-    --ink: #e6e3da;
-    --ink-2: #98a1a6;
-    --ink-3: #6a7378;
-
-    --verdigris: #5fbfae;
-    --verdigris-tint: #14282a;
-    --verdigris-edge: #7ed4c3;
-    --brass: #d3a444;
-    --brass-tint: #241f13;
-    --vermilion: #e0736a;
-    --vermilion-tint: #2a1614;
-
-    --rule: #262f35;
-    --rule-2: #3a464d;
-
-    --shadow-plate: 0 1px 0 rgba(0, 0, 0, 0.4), 0 1px 3px -1px rgba(0, 0, 0, 0.6);
-    --shadow-lift: 0 2px 4px -2px rgba(0, 0, 0, 0.5), 0 12px 28px -18px rgba(0, 0, 0, 0.9);
-    --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.5);
-  }
-}
-
-/* Explicit override wins in both directions, for a future in-app toggle. */
 :root[data-theme="dark"] {
-  --ground: #0d1114;
-  --plate: #141a1e;
-  --plate-2: #192025;
-  --recess: #0a0e10;
+  color-scheme: dark;
 
-  --ink: #e6e3da;
-  --ink-2: #98a1a6;
-  --ink-3: #6a7378;
+  --ground: #15181b;
+  --plate: #1c2024;
+  --plate-2: #22272c;
+  --recess: #101315;
+  --wash: #262c33;
 
-  --verdigris: #5fbfae;
-  --verdigris-tint: #14282a;
-  --verdigris-edge: #7ed4c3;
-  --brass: #d3a444;
-  --brass-tint: #241f13;
-  --vermilion: #e0736a;
-  --vermilion-tint: #2a1614;
+  --ink: #e8e6e1;
+  --ink-2: #a3aab0;
+  --ink-3: #868e95;
 
-  --rule: #262f35;
-  --rule-2: #3a464d;
+  /* One value serves as both text and fill here: on this ground it clears 7:1 either way. */
+  --accent: #6fbdb0;
+  --accent-solid: #6fbdb0;
+  --accent-tint: #172b29;
+  --accent-edge: #8ed4c7;
+  --advisory: #d9ab5a;
+  --advisory-tint: #2a2318;
+  --alert: #e08a7d;
+  --alert-tint: #2c1a17;
+  --on-accent: #12171a;
 
-  --shadow-plate: 0 1px 0 rgba(0, 0, 0, 0.4), 0 1px 3px -1px rgba(0, 0, 0, 0.6);
-  --shadow-lift: 0 2px 4px -2px rgba(0, 0, 0, 0.5), 0 12px 28px -18px rgba(0, 0, 0, 0.9);
-  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+  --rule: #2a3036;
+  --rule-2: #3c454c;
+
+  --shadow-plate: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 12px -6px rgba(0, 0, 0, 0.55);
+  --shadow-lift: 0 2px 6px -2px rgba(0, 0, 0, 0.45), 0 18px 40px -20px rgba(0, 0, 0, 0.8);
+  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
 /* ==========================================================================
@@ -226,31 +240,40 @@ html {
 body {
   margin: 0;
   font-family: var(--font-ui);
-  font-size: 15px;
-  line-height: 1.5;
+  font-size: 15.5px;
+  line-height: 1.55;
   color: var(--ink);
   background-color: var(--ground);
-  /* Intaglio grain. Inline so nothing is fetched — see the rule at the top of this file. */
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23g)' opacity='0.022'/%3E%3C/svg%3E");
+  /*
+   * A single wash from the top of the page. It replaces the intaglio grain the previous system
+   * used: same job — keep the ground from reading as a flat fill — with none of the texture,
+   * and it costs one gradient instead of an inline SVG the size of a paragraph.
+   */
+  background-image: radial-gradient(125% 75% at 50% -12%, var(--wash) 0%, transparent 62%);
+  background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
+/*
+ * Headings are set in the UI face, not the display face. Atkinson at 700 is rounder and much
+ * quieter than Fraunces at the same size, and it means a page of headings and labels is one
+ * voice rather than two arguing.
+ */
 h1,
 h2,
 h3,
 h4 {
-  font-family: var(--font-display);
-  font-weight: 600;
-  /* Optical size tracks the rendered size; without it Fraunces goes spidery in headings. */
-  font-variation-settings: "opsz" 36;
-  letter-spacing: -0.012em;
+  font-family: var(--font-ui);
+  font-weight: 700;
+  letter-spacing: -0.011em;
+  line-height: 1.25;
   margin: 0;
 }
 
 a {
-  color: var(--verdigris);
-  text-decoration-color: color-mix(in srgb, var(--verdigris) 32%, transparent);
+  color: var(--accent);
+  text-decoration-color: color-mix(in srgb, var(--accent) 32%, transparent);
   text-underline-offset: 2px;
 }
 
@@ -259,45 +282,39 @@ a:hover {
 }
 
 :focus-visible {
-  outline: 2px solid var(--verdigris-edge);
+  outline: 2px solid var(--accent-edge);
   outline-offset: 2px;
+  border-radius: var(--radius-xs);
 }
 
 /* ==========================================================================
    4. Masthead
    ========================================================================== */
 
+/*
+ * The engraved double rule that used to sit under here is gone. A sticky bar separates itself
+ * from scrolling content by casting a shadow, which is what a real sheet of paper does, and it
+ * leaves the top of the page quieter.
+ */
 .masthead {
   background: var(--plate);
-  border-bottom: 1px solid var(--rule-2);
+  border-bottom: 1px solid var(--rule);
+  box-shadow: 0 1px 3px -1px rgba(30, 32, 36, 0.05);
   position: sticky;
   top: 0;
   z-index: 20;
 }
 
-/*
- * The engraver's double rule: a heavy line and a hairline with air between them. It appears
- * three times in this system — under the masthead, under a ledger head, above a ledger foot —
- * and it is the single most repeated signal that this is a printed instrument.
- */
-.masthead::after {
-  content: "";
-  display: block;
-  height: 3px;
-  border-top: 1px solid var(--rule);
-  background: transparent;
-}
-
 .masthead-inner {
   max-width: var(--measure);
   margin: 0 auto;
-  padding: 13px 28px;
+  padding: 14px 32px;
   display: flex;
   align-items: center;
-  gap: 15px;
+  gap: 16px;
 }
 
-/* Institutional identity, engraved rather than drawn. */
+/* Institutional identity. The one badge in the system that stays a hard circle. */
 .seal {
   width: 42px;
   height: 42px;
@@ -305,9 +322,10 @@ a:hover {
   position: relative;
   display: grid;
   place-items: center;
-  border: 1px solid var(--verdigris);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
   border-radius: 50%;
-  color: var(--verdigris);
+  background: var(--accent-tint);
+  color: var(--accent);
   font-family: var(--font-display);
   font-variation-settings: "opsz" 12;
   font-size: 13px;
@@ -320,13 +338,17 @@ a:hover {
   content: "";
   position: absolute;
   inset: 3px;
-  border: 1px solid color-mix(in srgb, var(--verdigris) 35%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
   border-radius: 50%;
 }
 
+/* One of the two places Fraunces survives: the school's name. */
 .masthead h1 {
-  font-size: 16.5px;
+  font-family: var(--font-display);
   font-variation-settings: "opsz" 18;
+  font-weight: 600;
+  font-size: 16.5px;
+  letter-spacing: -0.004em;
   line-height: 1.15;
 }
 
@@ -342,7 +364,7 @@ a:hover {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
 }
 
 .masthead nav form {
@@ -355,7 +377,7 @@ a:hover {
   flex-direction: column;
   align-items: flex-end;
   line-height: 1.2;
-  margin-left: 8px;
+  margin-left: 6px;
   padding-left: 15px;
   border-left: 1px solid var(--rule);
   font-size: 12.5px;
@@ -370,6 +392,45 @@ a:hover {
   color: var(--ink-3);
 }
 
+/* --- The light/dark switch ---------------------------------------------- */
+
+/*
+ * Sits outside the signed-in block in the markup, so it is also reachable on the sign-in page —
+ * the one screen with no navigation at all, and the first thing anyone sees.
+ */
+.theme-toggle {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background 0.16s, color 0.16s, border-color 0.16s;
+}
+
+.theme-toggle:hover {
+  background: var(--recess);
+  border-color: var(--rule);
+  color: var(--ink);
+}
+
+.theme-toggle svg {
+  display: block;
+  width: 17px;
+  height: 17px;
+  /* The sun turns a little under the cursor. The whole of the delight budget, spent here. */
+  transition: transform 0.45s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+.theme-toggle:hover svg {
+  transform: rotate(-20deg);
+}
+
 /* ==========================================================================
    5. Page layout
    ========================================================================== */
@@ -377,7 +438,7 @@ a:hover {
 .page {
   max-width: var(--measure);
   margin: 0 auto;
-  padding: 34px 28px 110px;
+  padding: 40px 32px 110px;
 }
 
 /* The record page: a sticky identity rail beside the scholastic plates. */
@@ -403,12 +464,16 @@ a:hover {
 /*
  * The learner's name is the title of the document, so it is set at display size in the rail
  * rather than in a page head above both columns. That is the whole point of the two-column
- * composition — identity stays fixed on screen while six years of terms scroll past it.
+ * composition — identity stays fixed on screen while six years of terms scroll past it. The
+ * second and last place Fraunces appears.
  */
 .rail-name {
-  font-size: 26px;
+  font-family: var(--font-display);
+  font-size: 27px;
+  font-weight: 600;
   font-variation-settings: "opsz" 40;
-  line-height: 1.12;
+  letter-spacing: -0.014em;
+  line-height: 1.14;
   margin: 6px 0 0;
   /* Filipino surnames plus four given names get long; break rather than overflow the rail. */
   overflow-wrap: break-word;
@@ -438,13 +503,13 @@ a:hover {
   align-items: flex-end;
   gap: 22px;
   flex-wrap: wrap;
-  margin-bottom: 26px;
+  margin-bottom: 28px;
 }
 
 .page-head h2 {
-  font-size: 31px;
-  font-variation-settings: "opsz" 48;
-  line-height: 1.1;
+  font-size: 29px;
+  letter-spacing: -0.018em;
+  line-height: 1.15;
 }
 
 .spacer {
@@ -469,6 +534,47 @@ a:hover {
   font-feature-settings: "zero" 1;
 }
 
+/*
+ * Phones. The masthead is a single flex row of six controls, which overflows well before this
+ * width; letting the nav wrap and dropping the signed-in name to its role keeps it usable.
+ */
+@media (max-width: 720px) {
+  .masthead-inner {
+    padding: 12px 18px;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .masthead nav {
+    width: 100%;
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+
+  .who {
+    margin-left: auto;
+    padding-left: 0;
+    border-left: none;
+    font-size: 0; /* The full name goes; the role tag below keeps its own size. */
+  }
+
+  .who-role {
+    font-size: 9.5px;
+  }
+
+  .page {
+    padding: 24px 18px 80px;
+  }
+
+  .page-head h2 {
+    font-size: 25px;
+  }
+
+  .rail-name {
+    font-size: 23px;
+  }
+}
+
 /* ==========================================================================
    6. Plates
    ========================================================================== */
@@ -479,30 +585,14 @@ a:hover {
   border: 1px solid var(--rule);
   border-radius: var(--radius);
   box-shadow: var(--shadow-plate);
-  margin-bottom: 20px;
-  animation: plate-rise 0.45s cubic-bezier(0.2, 0.75, 0.3, 1) backwards;
-}
-
-/*
- * The controlled grid break: a term plate reaches a few pixels left of its column at the top
- * rule, so a column of them reads as layered documents rather than stacked boxes. Suppressed
- * below the two-column breakpoint, where there is no gutter to reach into.
- */
-@media (min-width: 1081px) {
-  .rail-body .card::before {
-    content: "";
-    position: absolute;
-    top: -1px;
-    left: -14px;
-    width: 14px;
-    border-top: 1px solid var(--rule-2);
-  }
+  margin-bottom: 22px;
+  animation: plate-rise 0.5s cubic-bezier(0.22, 0.7, 0.25, 1) backwards;
 }
 
 @keyframes plate-rise {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateY(6px);
   }
 }
 
@@ -511,20 +601,20 @@ a:hover {
   align-items: center;
   gap: 14px;
   flex-wrap: wrap;
-  padding: 12px 18px;
+  padding: 14px 22px;
   background: var(--plate-2);
-  /* Double rule, as under the masthead. */
-  border-bottom: 1px solid var(--rule-2);
-  box-shadow: 0 3px 0 -2px var(--rule);
+  border-bottom: 1px solid var(--rule);
+  /* Follows the plate's corner, or the tint squares off inside a rounded box. */
+  border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
 }
 
 .card-head h3 {
-  font-size: 17px;
-  font-variation-settings: "opsz" 20;
+  font-size: 16.5px;
+  letter-spacing: -0.008em;
 }
 
 .card-body {
-  padding: 18px;
+  padding: 22px;
 }
 
 .card[data-tone="quiet"] .card-head {
@@ -539,6 +629,9 @@ a:hover {
  * Sits behind the learner-identity plate. Rendered as inline SVG by <Guilloche/> rather than
  * a background image, so it can be sized to its plate and needs no data URI the size of a
  * paragraph. Pointer-events off — it is decoration and must never eat a click.
+ *
+ * Fainter than it was. It survives the redesign because the record is still a security
+ * document; it just stops announcing it.
  */
 .guilloche {
   position: absolute;
@@ -547,8 +640,8 @@ a:hover {
   overflow: hidden;
   pointer-events: none;
   border-radius: var(--radius);
-  color: var(--verdigris);
-  opacity: 0.05;
+  color: var(--accent);
+  opacity: 0.035;
   animation: guilloche-in 1.4s ease-out backwards;
 }
 
@@ -567,10 +660,9 @@ a:hover {
   height: 380px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .guilloche {
-    opacity: 0.09;
-  }
+/* Faint on paper, less faint on a backlit ground. */
+:root[data-theme="dark"] .guilloche {
+  opacity: 0.06;
 }
 
 @keyframes guilloche-in {
@@ -600,7 +692,7 @@ a:hover {
 }
 
 .field {
-  padding: 9px 14px;
+  padding: 11px 15px;
   border-right: 1px solid var(--rule);
   border-bottom: 1px solid var(--rule);
 }
@@ -636,6 +728,10 @@ a:hover {
    9. The ledger
    ========================================================================== */
 
+/*
+ * Rule 2 from the top of this file lives here. Everything around the grid softened; the grid
+ * did not. Full-contrast figures, tabular alignment, one hairline per row.
+ */
 .ledger {
   width: 100%;
   border-collapse: collapse;
@@ -649,15 +745,13 @@ a:hover {
   color: var(--ink-3);
   font-weight: 700;
   text-align: left;
-  padding: 8px 10px;
-  /* Double rule under the head — the engraving convention, third appearance. */
+  padding: 10px;
   border-bottom: 1px solid var(--rule-2);
-  box-shadow: 0 3px 0 -2px var(--rule);
   white-space: nowrap;
 }
 
 .ledger td {
-  padding: 7px 10px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--rule);
 }
 
@@ -666,20 +760,21 @@ a:hover {
 }
 
 /*
- * Row hover is a verdigris tick against the leading edge, not a fill. A fill across a grid of
- * numbers is noise; a tick says "this row" without touching a single digit's contrast.
+ * Row hover is an accent tick against the leading edge plus the faintest wash, not a fill. A
+ * strong fill across a grid of numbers is noise; a tick says "this row" without touching a
+ * single digit's contrast.
  */
 .ledger tbody tr td:first-child {
-  box-shadow: inset 2px 0 0 -2px transparent;
-  transition: box-shadow 0.12s;
+  box-shadow: inset 3px 0 0 -3px transparent;
+  transition: box-shadow 0.14s;
 }
 
 .ledger tbody tr:hover td:first-child {
-  box-shadow: inset 2px 0 0 0 var(--verdigris);
+  box-shadow: inset 3px 0 0 0 var(--accent);
 }
 
 .ledger tbody tr:hover td {
-  background: color-mix(in srgb, var(--verdigris) 4%, transparent);
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
 }
 
 .ledger .num {
@@ -704,13 +799,12 @@ a:hover {
 
 .ledger tfoot td {
   border-top: 1px solid var(--rule-2);
-  box-shadow: 0 -3px 0 -2px var(--rule);
-  padding: 10px;
+  padding: 11px 10px;
   font-weight: 700;
 }
 
 .grade-fail {
-  color: var(--vermilion);
+  color: var(--alert);
   font-weight: 700;
 }
 
@@ -720,8 +814,8 @@ a:hover {
   text-transform: uppercase;
   color: var(--ink-3);
   border: 1px solid var(--rule-2);
-  border-radius: 1px;
-  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+  padding: 2px 8px;
   white-space: nowrap;
 }
 
@@ -730,58 +824,55 @@ a:hover {
 }
 
 /* ==========================================================================
-   10. The struck seal, chips
+   10. The seal, promotion marks, chips
    ========================================================================== */
 
 /*
- * Promotion status. Debossed into the plate in light mode, embossed out of it in dark — the
- * light direction flips because a press leaves an impression in paper and a highlight in
- * anything backlit.
+ * Promotion status. It used to be struck into the plate — rotated, debossed, overshooting on
+ * arrival. Now it is a soft tinted label that sits straight. The information is identical and
+ * it no longer shouts across the top of every term.
  */
 .stamp {
   position: relative;
-  font-family: var(--font-display);
-  font-variation-settings: "opsz" 11;
-  font-size: 11.5px;
+  font-family: var(--font-ui);
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  padding: 5px 13px;
-  border: 1.5px solid currentColor;
-  border-radius: 1px;
-  color: var(--verdigris);
-  background: color-mix(in srgb, var(--verdigris) 7%, transparent);
-  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--verdigris) 22%, transparent);
-  transform: rotate(-1.4deg);
+  padding: 6px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-radius: var(--radius-pill);
+  color: var(--accent);
+  background: var(--accent-tint);
   white-space: nowrap;
-  animation: strike 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) backwards;
-  animation-delay: 0.25s;
+  animation: strike 0.45s cubic-bezier(0.22, 0.9, 0.3, 1) backwards;
+  animation-delay: 0.2s;
 }
 
 .stamp[data-tone="fail"] {
-  color: var(--vermilion);
-  background: color-mix(in srgb, var(--vermilion) 7%, transparent);
-  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--vermilion) 22%, transparent);
+  color: var(--alert);
+  border-color: color-mix(in srgb, var(--alert) 28%, transparent);
+  background: var(--alert-tint);
 }
 
 .stamp[data-tone="none"] {
   color: var(--ink-3);
   border-style: dashed;
+  border-color: var(--rule-2);
   background: transparent;
-  box-shadow: none;
 }
 
 .stamp[data-tone="pending"] {
-  color: var(--brass);
-  background: color-mix(in srgb, var(--brass) 8%, transparent);
-  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--brass) 22%, transparent);
+  color: var(--advisory);
+  border-color: color-mix(in srgb, var(--advisory) 30%, transparent);
+  background: var(--advisory-tint);
 }
 
-/* The press: overshoot, then settle onto its final angle. Fires once, on load. */
+/* Arrival, not impact: it rises into place with the plate rather than landing on it. */
 @keyframes strike {
   from {
     opacity: 0;
-    transform: rotate(-5deg) scale(1.09);
+    transform: translateY(4px) scale(0.97);
   }
 }
 
@@ -789,19 +880,19 @@ a:hover {
 .seal-plate {
   display: grid;
   place-items: center;
-  padding: 20px 0 6px;
+  padding: 22px 0 8px;
 }
 
 .seal-mark {
   width: 132px;
   height: 132px;
-  color: var(--verdigris);
-  animation: strike 0.55s cubic-bezier(0.2, 1.4, 0.4, 1) backwards;
-  animation-delay: 0.3s;
+  color: var(--accent);
+  animation: strike 0.5s cubic-bezier(0.22, 0.9, 0.3, 1) backwards;
+  animation-delay: 0.25s;
 }
 
 .seal-mark[data-tone="fail"] {
-  color: var(--vermilion);
+  color: var(--alert);
 }
 
 .seal-mark[data-tone="none"] {
@@ -809,44 +900,46 @@ a:hover {
 }
 
 .seal-mark[data-tone="pending"] {
-  color: var(--brass);
+  color: var(--advisory);
 }
 
 .chip {
   font-size: 10.5px;
-  letter-spacing: 0.11em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
   font-weight: 700;
-  padding: 3px 9px;
-  border-radius: 1px;
-  border: 1px solid color-mix(in srgb, var(--verdigris) 30%, transparent);
-  background: var(--verdigris-tint);
-  color: var(--verdigris);
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+  background: var(--accent-tint);
+  color: var(--accent);
   white-space: nowrap;
 }
 
 .chip[data-tone="pass"] {
-  border-color: color-mix(in srgb, var(--verdigris) 30%, transparent);
-  background: var(--verdigris-tint);
-  color: var(--verdigris);
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+  background: var(--accent-tint);
+  color: var(--accent);
 }
 
 .chip[data-tone="fail"] {
-  border-color: color-mix(in srgb, var(--vermilion) 30%, transparent);
-  background: var(--vermilion-tint);
-  color: var(--vermilion);
+  border-color: color-mix(in srgb, var(--alert) 26%, transparent);
+  background: var(--alert-tint);
+  color: var(--alert);
 }
 
 .chip[data-tone="warn"] {
-  border-color: color-mix(in srgb, var(--brass) 32%, transparent);
-  background: var(--brass-tint);
-  color: var(--brass);
+  border-color: color-mix(in srgb, var(--advisory) 28%, transparent);
+  background: var(--advisory-tint);
+  color: var(--advisory);
 }
 
+/* --ink-2, not --ink-3: this is the one chip whose fill is --recess, and the lighter ink does
+   not clear 4.5:1 against it. */
 .chip[data-tone="muted"] {
   border-color: var(--rule);
   background: var(--recess);
-  color: var(--ink-3);
+  color: var(--ink-2);
 }
 
 /* ==========================================================================
@@ -857,9 +950,9 @@ a:hover {
   font-family: var(--font-ui);
   font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.02em;
-  padding: 8px 15px;
-  border-radius: var(--radius);
+  letter-spacing: 0.01em;
+  padding: 9px 16px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--rule-2);
   background: var(--plate);
   color: var(--ink);
@@ -869,49 +962,45 @@ a:hover {
   align-items: center;
   gap: 7px;
   white-space: nowrap;
-  transition: background 0.14s, border-color 0.14s, color 0.14s, transform 0.06s;
+  transition: background 0.16s, border-color 0.16s, color 0.16s, box-shadow 0.16s,
+    transform 0.06s;
 }
 
 .btn:hover {
   background: var(--recess);
-  border-color: var(--ink-3);
+  border-color: var(--rule-2);
 }
 
 .btn:active {
   transform: translateY(1px);
 }
 
+.btn:focus-visible {
+  outline: none;
+  border-color: var(--accent-edge);
+  box-shadow: var(--ring);
+}
+
 .btn[data-variant="primary"] {
-  background: var(--verdigris);
-  border-color: var(--verdigris);
-  /* Fixed rather than tokenised: the fill is dark in light mode and light in dark mode, so a
-     token would have to invert with it and there is only one place it is used. */
-  color: #f8f7f4;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .btn[data-variant="primary"] {
-    color: #0d1114;
-  }
-}
-
-:root[data-theme="dark"] .btn[data-variant="primary"] {
-  color: #0d1114;
+  background: var(--accent-solid);
+  border-color: var(--accent-solid);
+  color: var(--on-accent);
+  box-shadow: 0 1px 2px rgba(30, 32, 36, 0.12);
 }
 
 .btn[data-variant="primary"]:hover {
-  background: var(--verdigris-edge);
-  border-color: var(--verdigris-edge);
+  background: var(--accent-edge);
+  border-color: var(--accent-edge);
 }
 
 .btn[data-variant="danger"] {
-  border-color: color-mix(in srgb, var(--vermilion) 45%, transparent);
-  color: var(--vermilion);
+  border-color: color-mix(in srgb, var(--alert) 40%, transparent);
+  color: var(--alert);
 }
 
 .btn[data-variant="danger"]:hover:not(:disabled) {
-  background: var(--vermilion-tint);
-  border-color: var(--vermilion);
+  background: var(--alert-tint);
+  border-color: var(--alert);
 }
 
 .btn[data-variant="ghost"] {
@@ -932,7 +1021,7 @@ a:hover {
 
 .btn-row {
   display: flex;
-  gap: 8px;
+  gap: 9px;
   flex-wrap: wrap;
 }
 
@@ -956,23 +1045,24 @@ a:hover {
   color: var(--ink);
   background: var(--plate);
   border: 1px solid var(--rule-2);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   box-shadow: var(--shadow-inset);
-  padding: 8px 11px;
+  padding: 9px 12px;
   width: 100%;
+  transition: border-color 0.16s, box-shadow 0.16s;
 }
 
 .input:focus,
 .select:focus {
-  outline: 2px solid var(--verdigris-edge);
-  outline-offset: -1px;
-  border-color: var(--verdigris-edge);
+  outline: none;
+  border-color: var(--accent-edge);
+  box-shadow: var(--ring);
 }
 
 .form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 15px;
+  gap: 18px;
 }
 
 .form-field label,
@@ -984,16 +1074,16 @@ a:hover {
   text-transform: uppercase;
   color: var(--ink-3);
   font-weight: 700;
-  margin-bottom: 5px;
+  margin-bottom: 6px;
 }
 
 /* --- The encoding cell ------------------------------------------------- */
 
 /*
- * A grade cell carries its own save state as an underline that fills — brass while the write
- * is in flight, verdigris once accepted, vermilion on a conflict. State belongs here and not
- * in a floating toast, because come sync a per-row version means one subject can conflict
- * while the other thirty-nine are fine, and a single global indicator cannot say that.
+ * A grade cell carries its own save state as an underline that fills — advisory while the write
+ * is in flight, accent once accepted, alert on a conflict. State belongs here and not in a
+ * floating toast, because come sync a per-row version means one subject can conflict while the
+ * other thirty-nine are fine, and a single global indicator cannot say that.
  */
 .grade-cell {
   position: relative;
@@ -1007,17 +1097,18 @@ a:hover {
   font-weight: 500;
   text-align: center;
   width: 54px;
-  padding: 5px 2px;
+  padding: 6px 2px;
   border: 1px solid var(--rule);
-  border-radius: 1px;
+  border-radius: var(--radius-xs);
   background: var(--ground);
   color: var(--ink);
+  transition: border-color 0.16s, box-shadow 0.16s, background 0.16s;
 }
 
 .grade-input:focus {
-  outline: 2px solid var(--verdigris-edge);
-  outline-offset: -1px;
-  border-color: var(--verdigris-edge);
+  outline: none;
+  border-color: var(--accent-edge);
+  box-shadow: var(--ring);
   background: var(--plate);
 }
 
@@ -1036,7 +1127,7 @@ a:hover {
   position: absolute;
   left: 3px;
   right: 3px;
-  bottom: -2px;
+  bottom: -3px;
   height: 2px;
   border-radius: 1px;
   background: currentColor;
@@ -1047,7 +1138,7 @@ a:hover {
 }
 
 .grade-cell[data-state="saving"] {
-  color: var(--brass);
+  color: var(--advisory);
 }
 
 .grade-cell[data-state="saving"]::after {
@@ -1056,7 +1147,7 @@ a:hover {
 }
 
 .grade-cell[data-state="saved"] {
-  color: var(--verdigris);
+  color: var(--accent);
 }
 
 .grade-cell[data-state="saved"]::after {
@@ -1066,7 +1157,7 @@ a:hover {
 
 .grade-cell[data-state="error"],
 .grade-cell[data-state="conflict"] {
-  color: var(--vermilion);
+  color: var(--alert);
 }
 
 .grade-cell[data-state="error"]::after,
@@ -1077,14 +1168,14 @@ a:hover {
 
 .grade-cell[data-state="error"] .grade-input,
 .grade-cell[data-state="conflict"] .grade-input {
-  border-color: var(--vermilion);
+  border-color: var(--alert);
 }
 
 /* Offline, phase A: editing is visibly unavailable rather than silently broken. */
 .grade-cell[data-locked="true"] .grade-input {
   background: var(--recess);
   border-style: dashed;
-  border-color: var(--brass);
+  border-color: var(--advisory);
   color: var(--ink-2);
   cursor: not-allowed;
 }
@@ -1094,31 +1185,34 @@ a:hover {
    ========================================================================== */
 
 /*
- * The search field is the first thing the registrar touches every single time. It gets
- * display type at 19px and the full width of the page — the one place in this system where a
- * control is allowed to be the loudest thing on screen.
+ * The search field is the first thing the registrar touches every single time. It gets the
+ * full width of the page and a size no other control is allowed — the one place in this system
+ * where a control is the loudest thing on screen. Set in the UI face rather than the display
+ * face now: it is a thing you type into, not a title.
  */
 .search-bar {
   position: relative;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .search-bar .input {
-  font-family: var(--font-display);
-  font-variation-settings: "opsz" 24;
   font-size: 19px;
-  padding: 15px 18px 15px 50px;
+  padding: 17px 20px 17px 52px;
+  border-radius: var(--radius);
   background: var(--plate);
-  border-width: 1px;
   border-color: var(--rule-2);
-  box-shadow: var(--shadow-inset), var(--shadow-plate);
+  box-shadow: var(--shadow-plate);
+}
+
+.search-bar .input:focus {
+  box-shadow: var(--shadow-plate), var(--ring);
 }
 
 /* Glass and handle, drawn in CSS so the field carries no image dependency. */
 .search-bar::before {
   content: "";
   position: absolute;
-  left: 20px;
+  left: 21px;
   top: 50%;
   width: 14px;
   height: 14px;
@@ -1131,10 +1225,11 @@ a:hover {
 .search-bar::after {
   content: "";
   position: absolute;
-  left: 33px;
+  left: 34px;
   top: 50%;
   width: 8px;
   height: 2px;
+  border-radius: 1px;
   background: var(--ink-3);
   transform: rotate(45deg);
   margin-top: 4px;
@@ -1148,8 +1243,8 @@ a:hover {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--ink-3);
-  margin: 0 0 14px;
-  padding-bottom: 10px;
+  margin: 0 0 16px;
+  padding-bottom: 11px;
   border-bottom: 1px solid var(--rule);
 }
 
@@ -1165,12 +1260,12 @@ a:hover {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 12px 18px;
+  padding: 13px 20px;
   border-bottom: 1px solid var(--rule);
   text-decoration: none;
   color: inherit;
   box-shadow: inset 3px 0 0 -3px transparent;
-  transition: background 0.12s, box-shadow 0.12s;
+  transition: background 0.14s, box-shadow 0.14s;
 }
 
 .result:last-child {
@@ -1178,15 +1273,14 @@ a:hover {
 }
 
 .result:hover {
-  background: color-mix(in srgb, var(--verdigris) 5%, transparent);
-  box-shadow: inset 3px 0 0 0 var(--verdigris);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  box-shadow: inset 3px 0 0 0 var(--accent);
 }
 
 .result-name {
-  font-family: var(--font-display);
-  font-variation-settings: "opsz" 18;
-  font-size: 16.5px;
-  font-weight: 600;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.008em;
 }
 
 .result-lrn {
@@ -1201,16 +1295,16 @@ a:hover {
 }
 
 .empty {
-  padding: 52px 20px;
+  padding: 56px 20px;
   text-align: center;
   color: var(--ink-3);
 }
 
 mark {
-  background: color-mix(in srgb, var(--brass) 26%, transparent);
+  background: color-mix(in srgb, var(--advisory) 24%, transparent);
   color: inherit;
-  border-radius: 1px;
-  padding: 0 1px;
+  border-radius: var(--radius-xs);
+  padding: 0 2px;
 }
 
 /* ==========================================================================
@@ -1228,9 +1322,9 @@ mark {
   font-family: var(--font-ui);
   font-size: 13px;
   font-weight: 700;
-  padding: 8px 15px;
+  padding: 9px 16px;
   margin-right: 12px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--rule-2);
   background: var(--plate);
   color: var(--ink);
@@ -1239,7 +1333,7 @@ mark {
 
 .file-input::file-selector-button:hover {
   background: var(--recess);
-  border-color: var(--ink-3);
+  border-color: var(--rule-2);
 }
 
 .file-list {
@@ -1254,7 +1348,7 @@ mark {
 }
 
 .file-list li {
-  padding: 5px 12px;
+  padding: 6px 13px;
   font-family: var(--font-mono);
   font-size: 12px;
   border-bottom: 1px solid var(--rule);
@@ -1264,7 +1358,7 @@ mark {
   border-bottom: none;
 }
 
-/* The tally. Figures set in display type, because the count is the finding. */
+/* The tally. Figures set in the mono face, because the count is the finding. */
 .tally {
   display: flex;
   flex-wrap: wrap;
@@ -1277,7 +1371,7 @@ mark {
   flex: 1 1 130px;
   background: var(--plate);
   border-right: 1px solid var(--rule);
-  padding: 14px 18px;
+  padding: 16px 20px;
 }
 
 .tally-item:last-child {
@@ -1285,19 +1379,33 @@ mark {
 }
 
 .tally-n {
-  font-family: var(--font-display);
-  font-variation-settings: "opsz" 40;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 30px;
-  font-weight: 700;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
   line-height: 1.05;
 }
 
-.tally-item[data-tone="pass"] .tally-n { color: var(--verdigris); }
-.tally-item[data-tone="fail"] .tally-n { color: var(--vermilion); }
-.tally-item[data-tone="warn"] .tally-n { color: var(--brass); }
-.tally-item[data-tone="info"] .tally-n { color: var(--verdigris); }
-.tally-item[data-tone="muted"] .tally-n { color: var(--ink-3); }
+.tally-item[data-tone="pass"] .tally-n {
+  color: var(--accent);
+}
+
+.tally-item[data-tone="fail"] .tally-n {
+  color: var(--alert);
+}
+
+.tally-item[data-tone="warn"] .tally-n {
+  color: var(--advisory);
+}
+
+.tally-item[data-tone="info"] .tally-n {
+  color: var(--accent);
+}
+
+.tally-item[data-tone="muted"] .tally-n {
+  color: var(--ink-3);
+}
 
 .tally-label {
   font-size: 9.5px;
@@ -1305,7 +1413,7 @@ mark {
   text-transform: uppercase;
   color: var(--ink-3);
   font-weight: 700;
-  margin-top: 3px;
+  margin-top: 4px;
 }
 
 .issue-list {
@@ -1318,7 +1426,7 @@ mark {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 10px 0;
+  padding: 11px 0;
   border-bottom: 1px solid var(--rule);
   font-size: 14px;
 }
@@ -1337,18 +1445,18 @@ mark {
   letter-spacing: 0.12em;
   text-transform: uppercase;
   font-weight: 700;
-  padding: 2px 7px;
-  border-radius: 1px;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
   margin-right: 10px;
-  border: 1px solid color-mix(in srgb, var(--brass) 32%, transparent);
-  background: var(--brass-tint);
-  color: var(--brass);
+  border: 1px solid color-mix(in srgb, var(--advisory) 28%, transparent);
+  background: var(--advisory-tint);
+  color: var(--advisory);
 }
 
 .issue-badge[data-severity="error"] {
-  border-color: color-mix(in srgb, var(--vermilion) 32%, transparent);
-  background: var(--vermilion-tint);
-  color: var(--vermilion);
+  border-color: color-mix(in srgb, var(--alert) 28%, transparent);
+  background: var(--alert-tint);
+  color: var(--alert);
 }
 
 .issue-cell {
@@ -1367,16 +1475,17 @@ mark {
 
 .progress-bar {
   flex: 1;
-  height: 6px;
+  height: 8px;
   background: var(--recess);
   border: 1px solid var(--rule);
-  border-radius: 3px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
-  background: var(--brass);
+  border-radius: var(--radius-pill);
+  background: var(--advisory);
   transition: width 160ms ease-out;
 }
 
@@ -1392,29 +1501,31 @@ mark {
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 1px;
-  background: rgba(255, 255, 255, 0.2);
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  /* Sits on the primary fill, so it tints with the label rather than assuming white. */
+  background: color-mix(in srgb, var(--on-accent) 18%, transparent);
 }
 
 .level-picker {
   position: absolute;
   right: 0;
-  top: calc(100% + 7px);
+  top: calc(100% + 8px);
   z-index: 30;
   background: var(--plate);
   border: 1px solid var(--rule-2);
   border-radius: var(--radius);
   box-shadow: var(--shadow-lift);
-  padding: 13px 15px;
+  padding: 14px 16px;
   min-width: 200px;
+  animation: plate-rise 0.16s ease backwards;
 }
 
 .level-option {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 4px 0;
+  padding: 5px 0;
   font-size: 14px;
   cursor: pointer;
   white-space: nowrap;
@@ -1431,30 +1542,31 @@ mark {
   font-family: var(--font-ui);
   font-size: 13px;
   line-height: 1;
-  padding: 4px 6px;
-  border-radius: 1px;
+  padding: 5px 7px;
+  border-radius: var(--radius-xs);
   border: 1px solid transparent;
   background: none;
   color: var(--ink-3);
   cursor: pointer;
+  transition: background 0.14s, color 0.14s, border-color 0.14s;
 }
 
 .row-remove:hover {
-  color: var(--vermilion);
-  border-color: color-mix(in srgb, var(--vermilion) 40%, transparent);
-  background: var(--vermilion-tint);
+  color: var(--alert);
+  border-color: color-mix(in srgb, var(--alert) 40%, transparent);
+  background: var(--alert-tint);
 }
 
 .row-remove[data-confirm="yes"] {
-  color: var(--vermilion);
-  border-color: var(--vermilion);
+  color: var(--alert);
+  border-color: var(--alert);
   font-weight: 700;
 }
 
 .row-move:hover:not(:disabled) {
-  color: var(--verdigris);
-  border-color: color-mix(in srgb, var(--verdigris) 40%, transparent);
-  background: var(--verdigris-tint);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-tint);
 }
 
 /* At the top or bottom of the list. Kept visible so the column does not reflow between rows. */
@@ -1466,8 +1578,8 @@ mark {
 .add-subject {
   display: flex;
   flex-direction: column;
-  gap: 11px;
-  padding: 15px;
+  gap: 12px;
+  padding: 17px;
   border: 1px dashed var(--rule-2);
   border-radius: var(--radius);
   background: var(--ground);
@@ -1481,40 +1593,43 @@ mark {
    16. Notices, danger zone, save indicator
    ========================================================================== */
 
+/*
+ * Advisory by default, info on request. The accent bar runs down the left edge inside a fully
+ * rounded box — the old square-left shape was there to look like a tab in a filing drawer.
+ */
 .notice {
-  border: 1px solid color-mix(in srgb, var(--brass) 30%, transparent);
+  border: 1px solid color-mix(in srgb, var(--advisory) 26%, transparent);
   border-left-width: 3px;
-  border-left-color: var(--brass);
-  background: var(--brass-tint);
-  padding: 11px 15px;
+  border-left-color: var(--advisory);
+  background: var(--advisory-tint);
+  padding: 12px 16px;
   font-size: 13.5px;
-  border-radius: 0 var(--radius) var(--radius) 0;
-  margin-bottom: 20px;
+  border-radius: var(--radius);
+  margin-bottom: 22px;
 }
 
 .notice[data-tone="info"] {
-  border-color: color-mix(in srgb, var(--verdigris) 30%, transparent);
-  border-left-color: var(--verdigris);
-  background: var(--verdigris-tint);
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+  border-left-color: var(--accent);
+  background: var(--accent-tint);
 }
 
 .danger-zone {
-  border: 1px solid color-mix(in srgb, var(--vermilion) 40%, transparent);
-  background: var(--vermilion-tint);
+  border: 1px solid color-mix(in srgb, var(--alert) 35%, transparent);
+  background: var(--alert-tint);
   border-radius: var(--radius);
-  padding: 18px 20px;
-  margin-top: 26px;
+  padding: 20px 22px;
+  margin-top: 28px;
 }
 
 .danger-zone h3 {
-  font-size: 17px;
-  font-variation-settings: "opsz" 20;
-  color: var(--vermilion);
-  margin-bottom: 7px;
+  font-size: 16.5px;
+  color: var(--alert);
+  margin-bottom: 8px;
 }
 
 .danger-zone p {
-  margin: 0 0 15px;
+  margin: 0 0 16px;
   font-size: 14px;
   max-width: 62ch;
 }
@@ -1531,9 +1646,9 @@ mark {
   z-index: 40;
   font-size: 12.5px;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  padding: 9px 15px;
-  border-radius: var(--radius);
+  letter-spacing: 0.02em;
+  padding: 10px 16px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--rule-2);
   background: var(--plate);
   box-shadow: var(--shadow-lift);
@@ -1541,14 +1656,14 @@ mark {
 }
 
 .save-indicator[data-state="saved"] {
-  color: var(--verdigris);
-  border-color: color-mix(in srgb, var(--verdigris) 45%, transparent);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
 }
 
 .save-indicator[data-state="error"] {
-  color: var(--vermilion);
-  border-color: var(--vermilion);
-  background: var(--vermilion-tint);
+  color: var(--alert);
+  border-color: var(--alert);
+  background: var(--alert-tint);
 }
 
 /* ==========================================================================
@@ -1566,11 +1681,11 @@ mark {
   font-family: var(--font-mono);
   font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  padding: 5px 10px;
+  padding: 5px 11px;
   border: 1px solid var(--rule);
-  border-radius: 1px;
+  border-radius: var(--radius-pill);
   background: var(--recess);
   color: var(--ink-3);
   white-space: nowrap;
@@ -1586,21 +1701,21 @@ mark {
 }
 
 .conn[data-state="live"] {
-  color: var(--verdigris);
-  border-color: color-mix(in srgb, var(--verdigris) 30%, transparent);
-  background: var(--verdigris-tint);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+  background: var(--accent-tint);
 }
 
 .conn[data-state="cached"] {
-  color: var(--brass);
-  border-color: color-mix(in srgb, var(--brass) 32%, transparent);
-  background: var(--brass-tint);
+  color: var(--advisory);
+  border-color: color-mix(in srgb, var(--advisory) 28%, transparent);
+  background: var(--advisory-tint);
 }
 
 .conn[data-state="syncing"] {
-  color: var(--brass);
-  border-color: color-mix(in srgb, var(--brass) 32%, transparent);
-  background: var(--brass-tint);
+  color: var(--advisory);
+  border-color: color-mix(in srgb, var(--advisory) 28%, transparent);
+  background: var(--advisory-tint);
 }
 
 .conn[data-state="syncing"]::before {
@@ -1621,14 +1736,14 @@ mark {
   font-family: var(--font-mono);
   font-size: 11.5px;
   letter-spacing: 0.04em;
-  color: var(--brass);
-  border: 1px solid color-mix(in srgb, var(--brass) 30%, transparent);
+  color: var(--advisory);
+  border: 1px solid color-mix(in srgb, var(--advisory) 26%, transparent);
   border-left-width: 3px;
-  border-left-color: var(--brass);
-  background: var(--brass-tint);
-  padding: 8px 12px;
-  border-radius: 0 var(--radius) var(--radius) 0;
-  margin-bottom: 18px;
+  border-left-color: var(--advisory);
+  background: var(--advisory-tint);
+  padding: 9px 13px;
+  border-radius: var(--radius);
+  margin-bottom: 20px;
 }
 
 /* A learner in the index whose full record was never cached. */
@@ -1638,7 +1753,7 @@ mark {
 
 .result[data-cached="false"]:hover {
   background: transparent;
-  box-shadow: inset 3px 0 0 0 var(--brass);
+  box-shadow: inset 3px 0 0 0 var(--advisory);
 }
 
 /* ==========================================================================
@@ -1667,36 +1782,36 @@ mark {
   text-transform: uppercase;
   color: var(--ink-3);
   font-weight: 700;
-  margin-top: 12px;
+  margin-top: 13px;
 }
 
 .login-form button {
-  margin-top: 20px;
+  margin-top: 22px;
   justify-content: center;
 }
 
 .login-error {
-  border: 1px solid color-mix(in srgb, var(--vermilion) 35%, transparent);
+  border: 1px solid color-mix(in srgb, var(--alert) 32%, transparent);
   border-left-width: 3px;
-  border-left-color: var(--vermilion);
-  background: var(--vermilion-tint);
-  color: var(--vermilion);
-  padding: 10px 13px;
+  border-left-color: var(--alert);
+  background: var(--alert-tint);
+  color: var(--alert);
+  padding: 11px 14px;
   font-size: 13px;
-  border-radius: 0 var(--radius) var(--radius) 0;
-  margin: 15px 0 0;
+  border-radius: var(--radius);
+  margin: 16px 0 0;
 }
 
 .account-form {
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 16px;
   max-width: 720px;
 }
 
 .field-row {
   display: flex;
-  gap: 15px;
+  gap: 16px;
   flex-wrap: wrap;
 }
 
@@ -1706,7 +1821,7 @@ mark {
 
 .account-actions {
   display: flex;
-  gap: 8px;
+  gap: 9px;
   align-items: center;
   flex-wrap: wrap;
 }
@@ -1722,10 +1837,9 @@ mark {
    ========================================================================== */
 
 .foot {
-  border-top: 1px solid var(--rule-2);
-  box-shadow: 0 -3px 0 -2px var(--rule);
-  margin-top: 46px;
-  padding-top: 15px;
+  border-top: 1px solid var(--rule);
+  margin-top: 48px;
+  padding-top: 16px;
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1740,7 +1854,7 @@ mark {
    ========================================================================== */
 
 /*
- * One orchestrated load — plates rise in stagger, the seal strikes, the guilloche fades up —
+ * One orchestrated load — plates rise in stagger, the seal settles, the guilloche fades up —
  * and nothing moves after that except direct responses to input. All of it off for anyone who
  * has asked for less.
  */

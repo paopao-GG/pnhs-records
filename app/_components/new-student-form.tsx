@@ -214,7 +214,7 @@ export function NewStudentForm() {
         <button className="btn" data-variant="primary" onClick={submit} disabled={pending}>
           {pending ? "Creating…" : "Create record"}
         </button>
-        {error && <span style={{ color: "var(--seal)" }}>{error}</span>}
+        {error && <span style={{ color: "var(--alert)" }}>{error}</span>}
       </div>
     </>
   );
