@@ -1,14 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getStudent, getSubjectsForStudent, getTerms } from "@/lib/db/queries.ts";
-import { requireUser } from "@/lib/auth/current-user.ts";
+import { requireUnlocked } from "@/lib/auth/guard.ts";
 import { GradeEditor } from "@/app/_components/grade-editor.tsx";
-import { CachedNotice } from "@/app/_components/connection-state.tsx";
 
 export const dynamic = "force-dynamic";
 
 export default async function EditStudentPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireUser();
+  await requireUnlocked();
 
   const { id } = await params;
   const studentId = Number(id);
@@ -35,7 +34,6 @@ export default async function EditStudentPage({ params }: { params: Promise<{ id
         </div>
       </div>
 
-      <CachedNotice renderedAt={new Date().toISOString()} />
 
       <div className="notice" data-tone="info">
         Enter quarterly ratings only — the printed SF10 recomputes final ratings and the general

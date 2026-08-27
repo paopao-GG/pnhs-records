@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { saveSubjectField } from "../actions.ts";
-import { useConnState } from "./online-store.ts";
 
 export type QuarterField = "q1" | "q2" | "q3" | "q4" | "final_rating";
 export type SaveState = "idle" | "saving" | "saved" | "error";
@@ -72,15 +71,6 @@ export function GradeCell({
 }) {
   const [text, setText] = useState(initial == null ? "" : String(initial));
   const [state, setState] = useState<SaveState>("idle");
-  /*
-   * Offline, the cell is disabled rather than accepting a value it cannot keep.
-   *
-   * This is the read-only half of the offline work and the honesty of it is the whole point:
-   * there is no outbox behind these cells yet, so a grade typed while disconnected would be
-   * written nowhere and reported as saved. A visibly dead field costs an adviser a minute; a
-   * silently discarded quarter costs a learner their record.
-   */
-  const locked = useConnState() === "cached";
   const lastSaved = useRef(initial);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hold = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -155,7 +145,7 @@ export function GradeCell({
   };
 
   return (
-    <span className="grade-cell" data-state={state} data-locked={locked}>
+    <span className="grade-cell" data-state={state}>
       <input
         className="grade-input"
         type="number"
@@ -163,8 +153,6 @@ export function GradeCell({
         max={100}
         value={text}
         aria-label={label}
-        disabled={locked}
-        title={locked ? "Editing is unavailable while showing a saved copy." : undefined}
         data-cell={`${row},${col}`}
         onKeyDown={onKeyDown}
         onFocus={(e) => e.currentTarget.select()}

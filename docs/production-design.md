@@ -1,58 +1,67 @@
 # PNHS Records — Production Design
 
-**Audience:** a developer implementing the production round.
+**Audience:** a developer implementing or maintaining this system.
 **Companion documents:** [technical-design.md](technical-design.md) describes the system as it
-stands today; [changes.md](changes.md) is the prioritised backlog this design serves.
+stands today; [changes.md](changes.md) is the backlog this design served.
 
-This document covers the four areas that need designing before code: multi-format import,
+This document covered the four areas that needed designing before code: multi-format import,
 accounts and roles, offline editing with sync, and deployment.
 
-> ### Status — corrected 12 August 2026
+> ### Status — 18 August 2026: the system is a local Windows application
 >
-> Most of this document described work that has since been built, and in two places the build
-> settled a question differently from the design. Those sections are corrected in place rather
-> than left to mislead; each correction says what changed and why.
+> It ran hosted, with accounts. It is now an Electron app installed on the registrar's PC and
+> opened with **one password**. Two of the four areas this document was written to design no
+> longer exist, and a third answered its own open question by disappearing.
+>
+> Sections are corrected in place rather than deleted, because the reasoning in them is what
+> stops the next person re-deriving it — and in the case of §4 and §5, re-building it.
 >
 > | Area | State |
 > |---|---|
-> | §2 Multi-format import — SHS, JHS, Form 137 | **Built** |
+> | §2 Multi-format import — SHS, JHS, Form 137 | **Built**, and untouched by the move |
 > | §3 Migrations | **Built**, with a different mechanism — see the correction in §3 |
-> | §4 Accounts and roles | **Built.** Soft delete deliberately **not** built — see §4 |
-> | §5 Offline editing and sync | **Read-only half built** (§5a). Sync still open, still gated on the question below |
-> | §6 Deployment | **Built** |
-> | §9 The frontend | **Built** — new section, added with the redesign |
+> | §4 Accounts and roles | **Built, then removed.** Replaced by one password — see §4 |
+> | §5 Offline editing and sync | **Dissolved.** The open question is answered by architecture — see §5 |
+> | §6 Deployment | **Replaced.** Vercel/Turso/R2 → an installer — see §6 |
+> | §9 The frontend | **Built**, restyled to "Soft Office", offline chrome removed — see §9 |
 >
-> The open question in §5 is unanswered and still decides whether the rest of it is 4–6 weeks of
-> work or none.
+> Nothing in this document is now blocked on a decision from the school.
 
 ---
 
-## 1. What changes, in one picture
+## 1. What changed, in one picture
 
-Today the app is single-machine and local: pages read SQLite directly, one user, no accounts.
-
-Production changes three things at once, and they interact:
+The app began single-machine and local: pages read SQLite directly, one user, no accounts. The
+production round made it hosted and multi-user. It is now single-machine and local again — but
+not back where it started, because everything built in between survived the return.
 
 ```mermaid
 graph TB
-  subgraph Now
+  subgraph Before["Where it began"]
     A1[Browser] --> A2[Next.js server components]
     A2 --> A3[(SQLite, same machine)]
   end
-  subgraph Production
-    B1[Browser + IndexedDB + outbox] -->|JSON API| B2[Next.js on home server]
-    B2 --> B3[(SQLite on server)]
-    B2 --> B4[Original files on disk]
-    B1 -.works while offline.-> B1
+  subgraph Hosted["The production round"]
+    B1[Browser + service worker] -->|HTTPS| B2[Next.js on Vercel]
+    B2 --> B3[(Turso, hosted)]
+    B2 --> B4[Cloudflare R2]
+  end
+  subgraph Desktop["Now"]
+    C1[Electron window] -->|127.0.0.1| C2[Next.js standalone server]
+    C2 --> C3[(SQLite in %LOCALAPPDATA%)]
+    C2 --> C4[originals/ beside it]
   end
 ```
 
-The consequential shift is the second one: **an offline client cannot read the server's SQLite
-directly**, so an API layer becomes necessary for anything that must work offline. That single
-requirement is what makes item #8 large.
+The shift that made offline sync large was that **an offline client cannot read the server's
+SQLite directly**, so an API layer became necessary for anything that had to work disconnected.
+When the server is the local machine, that requirement is not satisfied — it is void. Pages read
+SQLite in server components again, which is the arrangement the whole of §5 existed to work
+around.
 
-Read-only pages that need no offline support can keep reading SQLite in server components. Do
-not convert the whole app.
+What came back from the hosted round and stayed: migrations, the audit trail, the Form 137
+importer, the review queue, the redesigned frontend, and a real backup story. What did not:
+accounts, object storage, the service worker, and four credentials.
 
 ---
 
@@ -209,9 +218,56 @@ both that the new columns arrive and that the existing rows survive.
 
 ---
 
-## 4. Accounts and roles · **BUILT**
+## 4. Accounts and roles — **BUILT, THEN REMOVED**
 
-Two roles, as specified:
+> The two-role account system described below was built, ran with real learner data, and was
+> removed on 18 August 2026 when the app became a local Windows application. It is recorded
+> here rather than deleted, because a future request for roles is a request to build this again
+> and the reasoning is worth not re-deriving.
+
+### What replaced it
+
+**One password.** No usernames, no roles, no account management.
+
+- Chosen on first launch, `scrypt`-hashed into the existing `school_settings` key/value table.
+  This replaces `npm run create-admin`, and asking a registrar to run a command-line bootstrap
+  was never a good answer.
+- Changed from **Settings**, which asks for the current one first.
+- **Nobody can reset it.** There is no administrator to ask and no recovery address. If it is
+  forgotten the way back is a backup, which is one more reason the backup has to be real.
+- Five wrong attempts lock guessing out for fifteen minutes.
+- The app locks itself after thirty minutes of no use, and whenever it is closed.
+
+Two things carried over from the accounts work unchanged, because neither was about accounts:
+
+- **`lib/auth/password.ts`** — the scrypt parameters, the constant-time verify that fails closed
+  on a malformed stored value, and the banned-word list that stops the password becoming the
+  school's name. All still right for one password.
+- **The guard in every route.** `requireUser()` became `requireUnlocked()` and kept all 28 call
+  sites. See the note below on why a local app still needs it.
+
+### Where sessions went
+
+The `sessions` and `login_attempts` tables are dropped by migration 4. Both were shaped by
+serverless hosting and neither survives contact with a single local process:
+
+| Then | Now | Why |
+|---|---|---|
+| `sessions` table, SHA-256 of a cookie token | A `Map` in the server process | The process lifetime *is* the app lifetime, so closing the app ends every session. No expiry sweep, no pruning, no rows to leak |
+| `login_attempts` table | An array of timestamps | The table existed because a host may run several instances and an in-process counter would see a fraction of the attempts. One process sees all of them |
+
+> #### `users` is deliberately **not** dropped
+>
+> Nothing reads it. But `record_history.user_id` names real people on every row written while
+> accounts existed, and dropping the table would leave that history pointing at bare integers —
+> the audit trail would survive and stop meaning anything.
+>
+> The column has no foreign key, so keeping the table costs one dormant table on databases that
+> already had it, and buys the ability to still answer who changed a grade in August 2026.
+
+### The system that was removed
+
+Two roles, as originally specified:
 
 | | Admin | Adviser |
 |---|---|---|
@@ -221,46 +277,72 @@ Two roles, as specified:
 | Restore a deleted record | ✓ | — |
 | Manage adviser accounts | ✓ | — |
 
-### Implementation
+Implemented with a `users` table, a `sessions` table, `scrypt` from `node:crypto`, and route
+protection applied to pages *and* API endpoints independently.
 
-- `users` — id, username, `password_hash`, `role`, `active`, timestamps.
-- `sessions` — token, user, expiry. Signed, HTTP-only, `SameSite=Lax` cookie.
-- Hashing with **`scrypt` from `node:crypto`**. No new dependency; consistent with the rest of
-  the project's dependency discipline.
-- Route protection applied to pages *and* API endpoints. Endpoints must be checked
-  independently — an offline client calls them directly.
-
-> #### ⚠ Correction — middleware cannot be the guard
+> #### ⚠ Correction from the build — middleware could not be the guard
 >
-> This originally said "route protection in middleware". Middleware runs on the Edge runtime,
-> where `node:crypto` does not exist, so it **cannot verify a session cookie** — only notice
-> that one is present. Importing the cookie name from the auth module dragged the database layer
-> into the Edge bundle and failed the build outright, which is the boundary announcing itself.
+> The original design said "route protection in middleware". Middleware runs on the Edge
+> runtime, where `node:crypto` does not exist, so it **could not verify a session cookie** —
+> only notice that one was present. Importing the cookie name from the auth module dragged the
+> database layer into the Edge bundle and failed the build outright, which is the boundary
+> announcing itself.
 >
-> Every page, action and route handler calls `requireUser()` for itself. `middleware.ts` still
-> exists, but only to spare a signed-out visitor a redirect chain; treating it as the security
-> boundary is how Next.js applications get walked past their own authentication.
+> Every page, action and route handler called `requireUser()` for itself. `middleware.ts` is now
+> deleted entirely, so the discipline is not merely correct — it is the only thing there is.
 >
 > Two more the build settled: **API routes answer 401, never a redirect** (a caller following a
 > redirect gets HTTP 200 and an HTML form where it asked for a workbook, which reads as
 > success), and **rate limiting had to move into the database**, because a module-level counter
-> is per-instance memory and on a host running more than one instance it counts a fraction of
-> the attempts.
+> is per-instance memory. That second one has now moved back, for the reason in the table above:
+> the constraint that forced it is gone.
 
-The unglamorous parts, which are the ones that get skipped:
+> #### Why a local app still guards every route
+>
+> It is tempting to drop `requireUnlocked()` on the grounds that there is nobody to keep out.
+> There is: the app is an HTTP server listening on loopback, and every process running as this
+> user can send it a request. The password screen is worth exactly as much as the guard behind
+> it.
+>
+> The complementary half is that the server binds **127.0.0.1** and not `0.0.0.0`. Next binds
+> the latter by default. See [technical-design.md](technical-design.md) §3.
 
-- **Rate limiting and lockout on login.** Without it, a LAN-local brute force against
-  `pantao123` succeeds in minutes.
-- **A minimum password policy**, because advisers will otherwise choose the school name.
-- **Invalidate existing sessions on password change or account deactivation.** A deactivated
-  adviser with a live cookie is still an adviser until it expires.
-- Session cookies: `HttpOnly`, `Secure`, `SameSite=Lax`, with a real expiry.
+### `docs/patch-1.md` asks for the roles back
+
+It is the newest requirement in the repository and it asks for a *sharper* split than ever
+existed: Admin does everything, **Adviser can only import**. It was written before this pivot
+and is superseded by it.
+
+**One password cannot express two permission sets.** Reinstating roles means reinstating
+accounts — the `users` table, sessions, per-request role checks and an account-management
+screen. It is not a small addition on top of what is here, and the removal above is what it
+would have to undo. If the school does want it, the design to follow is the one recorded in
+this section.
+
+### Audit
+
+`record_history` is append-only: student, table, field, old value, new value, user, timestamp.
+It serves autosave recovery and attribution with one mechanism. Write to it inside the same
+transaction as the change itself, or the two can disagree.
+
+**New rows carry a null user**, and that is the real cost of removing accounts. The history
+still answers *what changed, from what, to what, and when* — which is what makes
+autosave-with-no-undo recoverable, and it is the part used daily. It no longer answers *who*.
+On a single shared office machine there was never much of an answer to give.
+
+**Growth still needs a decision, not silence.** Autosave-as-you-type means a row per field
+change per learner, forever. At 5,000 learners with ~40 subjects and four quarters each,
+ordinary encoding generates hundreds of thousands of rows a year.
+
+That is not a performance problem — SQLite will not notice — but it is unbounded growth in a
+table nobody prunes. Either set a retention window or state explicitly that unbounded growth is
+accepted because the rows are small. It is still undecided.
 
 ### Delete becomes soft delete — **NOT BUILT. Deliberately.**
 
 > Everything in this section describes a design that was **not implemented**. `students` has no
 > `deleted_at` and no `deleted_by`, delete is permanent, and there is no restore. The "Restore a
-> deleted record" row in the roles table above therefore describes nothing that exists.
+> deleted record" row in the roles table above therefore describes nothing that ever existed.
 >
 > It was dropped so the importer's dedup query could stay as it is — see the trap below, which
 > is the reason. If soft delete is ever added, this section and that trap are the design to
@@ -269,9 +351,8 @@ The unglamorous parts, which are the ones that get skipped:
 The design, if it is picked up:
 
 `students` gains `deleted_at` and `deleted_by`. Deleting sets them; every query filters them
-out. The adviser experience is unchanged — the record disappears from search, and the
-typed-LRN confirmation still applies — but an admin can restore it, and the action is
-attributable.
+out. The user experience is unchanged — the record disappears from search, and the typed-LRN
+confirmation still applies — but it can be restored.
 
 It also keeps a learner's id stable across a delete-and-reimport, where today they would come
 back with a new id.
@@ -304,264 +385,222 @@ back with a new id.
 > This is called out here, next to the soft-delete decision, because whoever implements soft
 > delete will be editing `queries.ts` and has no reason to go looking inside the importer.
 
-### Audit
-
-`record_history` is append-only: student, table, field, old value, new value, user, timestamp.
-It serves autosave recovery (#4) and account attribution (#6) with one mechanism. Write to it
-inside the same transaction as the change itself, or the two can disagree.
-
-**Growth needs a decision, not silence.** Autosave-as-you-type means a row per field change per
-learner, forever. At 5,000 learners with ~40 subjects and four quarters each, ordinary encoding
-generates hundreds of thousands of rows a year, and re-encoding a corrected grade adds more.
-
-That is not a performance problem — SQLite will not notice — but it is unbounded growth in a
-table nobody prunes. Either set a retention window (full detail for the current school year,
-then keep only the last value per field) or state explicitly that unbounded growth is accepted
-because the rows are small. Decide it now, while the table is empty.
-
 ---
 
-## 5. Offline editing and sync
+## 5. Offline editing and sync — **DISSOLVED, not deferred**
 
-The largest item. Design it deliberately, because a records system that silently loses or
-mis-merges a grade is worse than one that refuses to work offline.
-
-### What this costs, and why
-
-**Estimated 4–6 weeks.** Everything else in the backlog totals around 13 days. This one item is
-therefore roughly three-quarters of the production round, and the estimate covers an API layer,
-IndexedDB, an outbox, per-row versioning, conflict UI, a service worker, PWA install, offline
-record creation and LAN HTTPS — each with its own failure modes.
-
-> **Open question that should be settled before any of it is built.**
+> This was the largest item in the backlog: an estimated **4–6 weeks**, roughly three-quarters
+> of the production round, covering an API layer, IndexedDB, an outbox, per-row versioning,
+> conflict UI, a service worker, PWA install, offline record creation and LAN HTTPS.
 >
-> The server sits on the school LAN. Everyone in the building reaches it whether or not the
-> internet is up, so "no internet" is not by itself a reason for any of this work.
->
-> The two scenarios that *would* justify it are very different in cost:
->
-> | Scenario | What it actually needs | Cost |
-> |---|---|---|
-> | Advisers encode grades on a laptop away from school, then sync | Everything in this section | 4–6 weeks |
-> | Insurance against the server or network being down | A UPS, plus a read-only cached copy so records stay *viewable* | ~2–3 days |
->
-> If the real need is the second, most of this section should be deleted rather than built.
-> Confirm which before starting.
+> **It no longer exists.** Not built, not deferred — the problem it solved does not occur in a
+> local application. There is no server to be away from and no network to lose. The service
+> worker, the manifest, the connection indicator and the `/api/health` probe are all deleted.
 
-### 5a. What is built: the read-only half
+### The open question, and how it was answered
 
-The cheap column of that table now exists, and it cost about what the table said it would. It is
-worth having whichever way the question is answered, and nothing in it is wasted if the
-expensive column is built later.
+The design blocked on one question, and it was never answered by the school:
 
-- A **service worker** (`public/sw.js`), network-first for pages, cache-first for the shell and
-  the self-hosted fonts. Records opened while connected stay readable when the server does not
-  answer.
-- **Connection state is permanent chrome in the masthead** — `Live` or `Cached`, never a toast.
-  A toast tells you once, while you are looking elsewhere, and then deletes the evidence.
-- A **freshness line** on a cached page: *Saved copy · as of 10:42, 12 Aug*. A real timestamp,
-  because "offline" on its own does not tell a registrar whether the grade they encoded an hour
-  ago is in front of them.
-- **Editing is disabled offline, visibly.** There is no outbox behind those cells yet, so a
-  grade typed while disconnected would be written nowhere and reported as saved. A dead field
-  costs an adviser a minute; a silently discarded quarter costs a learner their record.
-- Installable as a PWA (`app/manifest.ts`), which is what makes `display: standalone` and the
-  offline shell useful together.
+| Scenario | What it needed | Cost |
+|---|---|---|
+| Advisers encode grades on a laptop away from school, then sync | Everything in this section | 4–6 weeks |
+| Insurance against the server or network being down | A UPS, plus a read-only cached copy | ~2–3 days |
 
-Three things the build settled that the design did not anticipate:
+The cheap column was built. The expensive one was never started, and the decision that would
+have chosen between them was overtaken: **the answer turned out to be neither.** The records
+moved onto the machine that reads them, so being "offline" is not a state the app can be in.
+
+This is worth stating plainly because it is the single largest piece of work this project did
+not do, and the reason is architectural rather than budgetary.
+
+### What was built, and is now removed
+
+The read-only half shipped and worked: a service worker (network-first for pages, cache-first
+for the shell and fonts), a permanent `Live`/`Cached` chip in the masthead rather than a toast,
+a freshness line carrying a real timestamp, editing visibly disabled while cached, and PWA
+install. All of it is deleted.
+
+Three things it settled are worth keeping in writing, because each is a trap that recurs:
 
 - **`navigator.onLine` is not the signal.** It reports whether a network interface exists, which
-  on a school LAN is true whether or not anything is listening — exactly the outage this half is
-  meant to cover. The service worker announces when it has had to answer from cache, which is
-  the signal that actually means "you are looking at a copy".
-- **The offline state must be able to release itself.** The first version could only return on
-  an `online` event, so one failed request left every grade cell disabled with no event coming,
-  because the browser had never thought it was offline. A 204 probe (`/api/health`) now runs
-  *only* while offline and proves the way back. This is covered by `npm run test:browser`.
-- **Cached pages expire after twelve hours.** Sign-out purges them, but a browser closed without
-  signing out would otherwise leave every record the last person opened readable on a shared
-  office machine indefinitely. Twelve hours covers an outage lasting most of a working day and
-  does not survive the machine being left overnight.
+  on a school LAN is true whether or not anything is listening — exactly the outage it was meant
+  to cover.
+- **An offline state must be able to release itself.** The first version could only return on an
+  `online` event, so one failed request left every grade cell disabled with no event coming,
+  because the browser had never thought it was offline.
+- **Cached pages must expire.** Sign-out purged them, but a browser closed without signing out
+  would leave every record the last person opened readable on a shared office machine
+  indefinitely.
 
-### Scope boundary
+The general shape of that last one survives the pivot in a different form: the app locks itself
+after thirty minutes idle, for the same reason.
 
-Not everything needs to work offline. The useful minimum:
+### If more than one machine ever needs the records
 
-| Works offline | Requires the server |
-|---|---|
-| Search the learner index | Importing files |
-| View any record opened before going offline | Printing an SF10 |
-| Edit grades and learner details | Managing accounts |
-| Create a new record | Restoring a deleted record |
+This is the one thing that would bring the whole section back, harder than before. Two
+installations are two databases, and reconciling them is exactly the sync problem — per-row
+versioning, conflict resolution, and `UNIQUE(lrn)` violations when two people create the same
+transferee — with no server to arbitrate.
 
-Printing needs the template and the fill engine, both server-side. Import needs files that live
-on the server. Neither is worth replicating client-side.
+**Do not solve it by putting the database on a shared network drive.** SQLite over SMB is the
+corruption scenario this design spends its effort avoiding, and it fails intermittently rather
+than immediately.
 
-### Client storage
-
-**IndexedDB**, holding:
-
-1. The learner index — already shipped whole to the browser for search, so this is a natural
-   fit. At 5,000 learners the payload is roughly 400 KB; slim the fields and cache it rather
-   than re-sending it each load.
-2. Full records for anything opened, so they remain viewable and editable offline.
-3. The **outbox**: queued changes not yet accepted by the server.
-
-### Sync protocol
-
-```mermaid
-sequenceDiagram
-  participant C as Client
-  participant S as Server
-  C->>C: edit → append to outbox (coalesced per field)
-  Note over C: offline — nothing sent
-  C->>S: reconnect: POST outbox {field, value, baseVersion}
-  S->>S: compare baseVersion with row version
-  alt versions match
-    S-->>C: accepted, new version
-  else changed since
-    S-->>C: conflict, with the server's value
-    C->>C: surface both values to the user
-  end
-```
-
-- **Version at the unit of edit, not the parent row.** `term_subjects` is already one row per
-  subject, so that row carries the version. This is the detail that decides whether the feature
-  is usable — see below.
-- Changes are **coalesced per field** — autosave-as-you-type would otherwise generate an
-  operation per keystroke. One pending change per field is enough.
-- **Conflicts are shown, never merged silently.** If two people edited the same grade, a person
-  decides. Last-writer-wins is acceptable for a section name; it is not acceptable for a mark
-  on a permanent record.
-- `record_history` records both sides of a conflict, so nothing is lost even if the wrong
-  choice is made.
-
-> ### ⚠ Versioning granularity decides whether conflicts are real
->
-> Versioning the *term* while sending changes *per field* manufactures conflicts that never
-> happened. Two advisers editing different subjects in the same Grade 9 term both bump the same
-> term version, so the second one is told their edit conflicts — when nothing overlapped.
->
-> On a grid where someone encodes forty subjects in a sitting, that fires constantly. Users
-> learn within a day to dismiss the conflict prompt without reading it, and the one safety
-> mechanism protecting grade data becomes noise.
->
-> Version `term_subjects` rows individually. A genuine conflict — two people editing the same
-> subject's Q2 — is then rare and worth a person's attention, which is the entire point.
-
-### Practical requirements
-
-- **HTTPS is mandatory** — service workers do not run over plain HTTP except on `localhost`.
-  This is needed for the LAN deployment regardless; see §6. Note that a self-signed certificate
-  must be installed in the **trust store of every client device**, or registration fails and
-  offline silently does not work.
-- New records created offline need client-generated ids that cannot collide. Use a UUID as a
-  client key, mapped to the server's integer id on first sync.
-- **Two people creating the same learner offline will violate `UNIQUE(lrn)` on sync.** This is
-  the most likely offline conflict in practice — two advisers both encoding a new transferee.
-  A blind insert fails and the second adviser's work appears lost. On sync, match an incoming
-  new record against existing learners **by LRN first**, and merge into that learner rather
-  than inserting.
-- The outbox must survive a browser restart, and the user must be able to see that changes are
-  pending. Silent queues erode trust the first time something appears lost.
+If a second machine is genuinely needed, the honest options are one shared install accessed by
+Remote Desktop, or going back to a hosted deployment — which is what the previous round was.
 
 ---
 
-## 6. Deployment
+## 6. Deployment — **an installer, not a host**
 
-> **This section was rewritten after the deployment target changed.** It originally specified a
-> mini-PC on the school LAN. The system now runs on Vercel with a hosted database and object
-> storage. The hardware advice is gone; the obligations that came with holding this data are not,
-> and several of them got *harder*, not easier.
+> **This section has now been rewritten twice.** It first specified a mini-PC on the school LAN,
+> then Vercel with a hosted database and object storage. Neither survives. What follows is the
+> third shape, and the obligations that came with holding this data have outlived all three.
 
-### What runs where
+### What ships
 
 | | |
 |---|---|
-| Application | Vercel, region `sin1` (Singapore) — nearest to Albay |
-| Database | Turso (libSQL), same region |
-| Original files | Cloudflare R2, private bucket |
-| Templates | Read from the deployment bundle, unchanged |
+| Application | `PNHS-Records-Setup-<version>.exe`, NSIS, per-user install (no administrator needed) |
+| Shell | Electron, spawning the Next standalone server on `127.0.0.1` |
+| Database | SQLite at `%LOCALAPPDATA%\PNHS Records\pnhs.db` |
+| Original files | `%LOCALAPPDATA%\PNHS Records\originals\` |
+| Templates | Read from the installed bundle, unchanged |
 
-Region matters more than it looks. Every page is a handful of queries, and the default `iad1`
-puts each one on a Pacific round trip. `preferredRegion` is pinned on the route handlers.
+Four decisions in there that are not obvious:
 
-### Capacity
+1. **`%LOCALAPPDATA%`, not `%APPDATA%` and never OneDrive.** SQLite and file-sync clients
+   corrupt each other — the client copies the file mid-write. Roaming AppData is synced by
+   domain profile roaming, which is the same hazard wearing a different name.
+2. **The uninstaller does not delete that folder.** It holds the school's permanent records.
+   "The user chose to uninstall" is not consent to destroy the only copy of the data.
+3. **One instance only.** `app.requestSingleInstanceLock()` is the first line of
+   `electron/main.cjs`. Two processes writing one SQLite file is the corruption every other
+   decision here avoids.
+4. **The server binds loopback.** See §4 and [technical-design.md](technical-design.md) §3.
+   This is the single security property of the desktop shape, and `npm run check:server` is
+   wired into the packaging command so it cannot regress quietly.
 
-72 real files average **180 KB** — measured and reliable.
+### The build refuses to ship learner data
 
-| Resource | At 5,000 learners | Against the free allowance |
-|---|---|---|
-| Original files | ~900 MB | R2 gives 10 GB. Comfortable. |
-| Database | 40–80 MB | Turso gives several GB. Not close. |
-| Bandwidth | Small — records are text | R2 charges no egress at all |
+`npm run build:desktop` runs `next build`, then **`npm run check:bundle`**, then
+electron-builder. The middle step exists because of a real failure, caught by listing a
+directory:
 
-The database figure is a conservative ceiling rather than a measurement: 44% of the current
-database is fixed per-table overhead, so extrapolating from a small sample overstates it. It errs
-high, which is safe.
+Next traces which files each route reads so it can copy them into the standalone bundle, by
+evaluating path expressions statically. `join(process.cwd(), "data")` was exactly resolvable —
+so it copied the live database, four backups, and twenty Form 137 originals carrying children's
+names, their parents' occupations and their home addresses into the bundle. The installer would
+have handed them to whoever installed the app.
 
-**The one that would have bitten:** Vercel Blob includes roughly 1 GB on the free plan, and
-5,000 learners is ~900 MB. That ceiling would have been reached during the first full intake,
-which is why originals went to R2 instead.
+The tests passed. The installer worked. Nothing said anything.
+
+`check:bundle` now refuses to package a bundle containing a `.db`, a `.docx`, or an `.xlsx`
+outside `templates/`. `lib/paths.ts` stops it happening in the first place. Both are needed.
 
 ### Operational requirements
 
-The LAN version of this list was about disks and power. The hosted version is about credentials
-and copies.
+The hosted version of this list was about credentials and copies. The desktop version is about
+one disk.
 
-1. **Backups are no longer free, and nobody will notice until they are needed.** The registrar
-   used to be able to back up by copying one file. That ability is gone. `npm run backup` writes
-   the hosted database to a local SQLite file — schedule it, and:
+1. **The machine is the single point of failure.** No provider replication stands behind it.
+   Backing up is a file copy again — which is what the registrar understood before any of this,
+   and what the move to hosting took away — but it is now the *whole* mitigation rather than an
+   extra layer.
+   - **Settings → Back up now**, or `npm run backup` scheduled with Task Scheduler.
+   - It uses SQLite's `VACUUM INTO` rather than copying the file, because copying a live
+     database catches it mid-write. `originals/` are content-addressed and copy safely.
    - **A copy must leave the building.** An encrypted external drive the registrar takes home is
-     enough at this scale. A backup living only in the same cloud account as the database is not
-     a backup against the failure most likely to occur — the account.
+     enough at this scale.
    - **An untested backup is a hypothesis.** Restore one and open a learner record:
-     `$env:PNHS_DB_PATH = 'backups/pnhs-....db'; npm run dev`. Do it on a schedule.
-   - Take one **before running migrations** against real data.
-2. **The R2 bucket must stay private.** Files are served through `/api/students/[id]/original`,
-   which checks the session. A public bucket URL is a shareable link to a child's record and
-   would undo the accounts work entirely.
-3. **Credentials are now the perimeter.** Four secrets — the Turso token and three R2 values —
-   are all that stand between the internet and every record. They belong in Vercel's environment
-   settings and in `.env.local`, never in git (`.gitignore` covers `.env.*`). Rotate them if a
-   laptop holding them is lost.
-4. **Vercel Hobby is non-commercial-use only.** This is a commissioned system for an institution.
-   The technical fit is fine; the terms are not, and an account suspension takes the school's
-   records offline. Moving to Pro also raises function duration from 60 s to 300 s.
-5. **Two admin accounts.** Only an admin can issue accounts or reset a password. A single admin
-   who is away is a system nobody can administer. The Accounts page warns while there is one.
+     `$env:PNHS_DATA_DIR = 'E:\pnhs-backup-...'; npm run dev`.
+2. **Updates cannot lose records, and no longer depend on remembering that.** Bump the
+   version, `npm run build:desktop`, run the installer over the old one. Records live outside
+   the install directory, and `runMigrations` copies the database to
+   `backups/pre-upgrade-v<from>-to-v<to>-<stamp>/` before applying a schema change. **If that
+   copy fails, nothing is migrated.** The version bump is load-bearing and `appId` /
+   `productName` must never change — see the README for why each is silent when got wrong.
+3. **A replacement machine is a backup, an install and a file copy**, in that order, with the
+   app closed and the old database's `-wal` and `-shm` files deleted before the backup's
+   `pnhs.db` goes in. The password travels inside the database. The README has the steps; the
+   `-wal` detail is the one that corrupts records when skipped.
+4. **The password gates the app, not the file.** Anyone who can read `pnhs.db` off the disk has
+   every record. **Turn on BitLocker**, and encrypt the backup drive. This is a real reduction
+   from the hosted deployment, where the data sat behind a credential, and it is the accepted
+   cost of the chosen approach.
+5. **Nobody can reset the password.** Write it down somewhere the records are not.
+6. **Decommission what is left of the hosted deployment.** The Turso auth token and the three R2
+   credentials are live until somebody revokes them **at the provider** — deleting `.env.local`
+   and `turso.txt` from the working tree does nothing about that. Revoke them, and confirm every
+   archived original is present locally before deleting the bucket.
+
+### Verifying an installed copy
+
+Most of this system is covered by `npm test`, `npm run roundtrip` and `npm run verify`, and the
+two packaging failures that produced no error message are covered by `check:bundle` and
+`check:server`. What follows is what none of them can reach: **the packaged application on a
+machine that has never run it.** Each of these has been proven in pieces; the whole has not.
+
+1. `npm run build:desktop`, then install the `.exe` on a clean machine.
+2. First launch shows **Set a password**, not a password prompt. A weak password is refused.
+3. `%LOCALAPPDATA%\PNHS Records\pnhs.db` exists with eleven tables at schema version 4.
+   **Nothing was written into the install directory.**
+4. Import one SF10-SHS, one SF10-JHS and one Form 137. All three land, the review queue shows
+   the expected flags, and `originals\` gains three files.
+5. Print an SF10 → a Save dialog appears → the file opens in Excel → the numbers match the
+   screen and the layout matches a school original. **This is also the outstanding print-preview
+   sign-off** — the mechanical evidence is strong and no person has ever confirmed it.
+6. Download a Form 137 original and confirm it is byte-identical to the source `.docx`.
+7. Edit a grade, reopen the record, confirm it persisted, and confirm `record_history` gained a
+   row with a null `user_id`.
+8. Close the app and reopen it: **the password is asked for again.** Leave it idle thirty
+   minutes: it locks.
+9. Launch a second copy: it focuses the first window rather than opening a second.
+10. Settings → Back up now to a removable drive, then open the backup:
+    `$env:PNHS_DATA_DIR = 'E:\pnhs-backup-...'; npm run dev`.
+11. **Upgrade over the top.** Bump the version, add a throwaway migration, build, and run the
+    new installer over the existing install. Then confirm all four: the app opens with **the
+    same password**, the learner from step 4 is still there,
+    `backups\pre-upgrade-v<n>-to-v<n+1>-*\pnhs.db` exists, and **that snapshot opens and holds
+    the learner**. Discard the throwaway migration afterwards.
+12. Uninstall: `%LOCALAPPDATA%\PNHS Records` still holds the database.
+
+Steps 5, 11 and 12 are the ones worth not skipping. The first is the product's only unverified
+claim. The second is the promise that updating cannot cost the school its records — the
+mechanism is covered by `npm run test:migrations`, but nobody has yet watched it happen through
+a real installer. The third is the difference between an uninstall and a data loss.
 
 ### Personal data
 
-Unchanged in substance, and more pressing now: this holds the personal data of **thousands of
-children** — names, birthdates, sex, and from Form 137 their parents' names, occupations and home
-addresses — on a public URL rather than a machine in a locked office.
+Unchanged in substance, and the risk profile has moved rather than shrunk: this holds the
+personal data of **thousands of children** — names, birthdates, sex, and from Form 137 their
+parents' names, occupations and home addresses.
 
 - **The Philippines' Data Privacy Act (RA 10173) applies to schools.** Someone should be named as
-  accountable for this data. Flagging it is not the same as having addressed it.
-- **Encryption at rest** is now the provider's, not the school's. That is a floor and not a
-  solution: it does nothing against a leaked credential, which is the realistic failure here.
+  accountable for this data. Flagging it is not the same as having addressed it. Still open.
+- **Encryption at rest is now the school's, not a provider's.** That is a downgrade in default
+  and an upgrade in control: BitLocker on one machine is achievable, and a leaked cloud
+  credential is no longer a way to lose everything at once.
 - **Encrypt the off-site backup.** It is the copy most likely to be lost.
-- **Retention.** Permanent records are permanent by design; `record_history`, sessions and import
-  logs are not, and should not accumulate indefinitely.
-- **Access is a privacy control.** An adviser can read every learner in the school. That was
-  decided deliberately — no adviser-to-section mapping exists — but it is a policy question the
-  school should be asked, not one this system should answer silently.
+- **Retention.** Permanent records are permanent by design; `record_history` and import logs are
+  not, and should not accumulate indefinitely.
+- **Everyone who uses the machine sees every learner.** That was true with accounts too — there
+  was never an adviser-to-section mapping — but it is now the only possible arrangement, and the
+  school should be told rather than left to assume otherwise.
 
 ### Scale check at 5,000 learners
 
 - ~200,000 `term_subjects` rows. The existing indexes on `student_id` and `term_id` are enough.
+- ~900 MB of original files, from a measured average of 180 KB across 72 real files. A local
+  disk does not care; the backup drive should be sized for it.
 - The learner index shipped to the browser for search is ~400 KB at that size. Fine.
-- **Bulk import is the one thing that needed a different shape**, and has one:
-  `npm run push:archive` runs the same importer directly against the hosted database from a
-  machine that already has the files. A thousand files through the browser is two hundred
-  round trips; this is one process with progress and a resume-by-rerun property.
+- **Bulk import** is the browser now, which is acceptable because the files are already on the
+  disk and no request leaves the machine. `npm run push:archive` is deleted with the host it
+  pushed to.
 
 ---
 
 ## 7. Build order — as executed
-
-The order below was followed and everything except the last line is done.
 
 | | | |
 |---|---|---|
@@ -569,15 +608,25 @@ The order below was followed and everything except the last line is done.
 | 1 | Items #1–#3 from [changes.md](changes.md) — small, independent | ✅ |
 | 2 | #4 autosave with `record_history` | ✅ |
 | 3 | #5 JHS importer | ✅ |
-| 4 | #6 accounts — before offline, which needs identity to attribute changes | ✅ |
+| 4 | #6 accounts | ✅ then removed — see §4 |
 | 5 | #7 Form 137 | ✅ |
-| 6 | #9 deploy | ✅ |
-| 7 | The frontend redesign and the read-only offline half (§5a, §9) | ✅ |
-| 8 | **#8 offline sync** — the remaining item | ⬜ **Settle the open question in §5 first** |
+| 6 | #9 deploy to Vercel / Turso / R2 | ✅ then removed — see §6 |
+| 7 | The frontend redesign and the read-only offline half | ✅ then half removed — see §5, §9 |
+| 8 | **#8 offline sync** | ✖ dissolved — see §5 |
+| 9 | **The desktop conversion** — paths, one password, Electron, installer | ✅ |
 
-Do not start #8 before reading §5. Sync without identity cannot attribute or resolve a conflict —
-identity now exists, so that objection is discharged; the open question about whether the feature
-is needed at all is not.
+The desktop conversion is the reason three rows above end in "then removed". Nothing in it was
+wasted work discovered late; the requirement changed after delivery, and the parts that were
+about *hosting* went with the host. The parts that were about *records* — every importer, the
+exporter, the audit trail, the review queue, the frontend — were untouched by it.
+
+The order it was built in, which is the order to follow if any of it is ever redone:
+
+1. `lib/paths.ts` and the database collapse, because everything else assumes them.
+2. The password gate, which is self-contained and testable on its own.
+3. Ripping out the offline and object-storage layers, once nothing depended on them.
+4. Electron and the installer last — debugging a packaging problem and an auth rewrite at the
+   same time is how a day disappears.
 
 ---
 
@@ -592,22 +641,25 @@ section used to open with is no longer true** — `npm run test:browser` exists.
 | JHS importer | `npm run roundtrip` covers JHS files — same guarantee already proven for SHS | ✅ |
 | Form 137 | `npm run test:f137` parses all 20 sample files; both variants, plus `PALIZA` | ✅ |
 | Migrations | `npm run test:migrations` runs against a copy of a **pre-migration** database and asserts the columns exist and the data survives | ✅ |
-| Accounts | `npm run test:auth` — an adviser cannot reach admin routes; a deactivated account cannot act; a forged cookie is refused | ✅ |
-| Deployment | `npm run smoke -- <url>` — the 401s, the 409 archive-only guard, and a file through ticket → object storage → import → byte-identical download | ✅ |
+| The password | `npm run test:unlock` — first-run detection, the policy, lockout, idle expiry, a token that was never issued, a password change closing every session | ✅ |
+| The bundle | `npm run check:bundle` — refuses to package an installer containing learner data. See §6 | ✅ |
 | Browser flows | `npm run test:browser` — see below | ✅ |
-| Sync | Two clients editing the same subject conflict; two clients editing different subjects **do not** | ⬜ with #8 |
+| Deployment | `npm run smoke` | ✖ deleted with the deployment it checked |
+| Sync | Two clients editing the same subject conflict | ✖ dissolved with §5 |
 
-The sync row is still the one that would catch the versioning-granularity bug described in §5,
-and it is still unwritten because the feature is unbuilt.
+Two things no automated check covers, both on the manual list in §6: nobody has compared a
+generated form against a printed original in Excel's print preview, and nobody has confirmed
+from a second machine that the app's port refuses to connect. The second is the loopback
+property, and it cannot be tested from the machine under test.
 
 ### `npm run test:browser`
 
-Thirty-six checks covering what no amount of `fetch` can see. It runs Chrome through Playwright
-via `channel: "chrome"` — the browser already on the machine, because Playwright's own Chromium
+Covers what no amount of `fetch` can see. It runs Chrome through Playwright via
+`channel: "chrome"` — the browser already on the machine, because Playwright's own Chromium
 download is a few hundred megabytes and is what failed when this was first attempted. It builds
-its own scratch database and starts its own dev server against it, rather than accepting a URL
-the way `smoke.ts` does: these checks type into grade cells, and a server someone else started
-is a server pointing at who-knows-what.
+its own scratch database and starts its own dev server against it rather than accepting a URL:
+these checks type into grade cells, and a server someone else started is a server pointing at
+who-knows-what.
 
 Most of these exist because something shipped broken and was caught by eye rather than by a test:
 
@@ -615,23 +667,26 @@ Most of these exist because something shipped broken and was caught by eye rathe
   increment the value. The encoding grid binds them to movement, so a stray keypress over a mark
   moves the cursor instead of silently rewriting the mark and autosaving it. A safety property,
   not an ergonomic one.
-- **The offline lock must release itself** without a reload. See §5a.
+- **A locked app must redirect to `/unlock`**, and a wrong password must be refused. With
+  `middleware.ts` deleted, `requireUnlocked()` in each route is the only thing in front of every
+  record in the school.
 - **Vertical movement must stop at the term boundary** — holding ↓ past the last subject of
   Grade 7 must not land in Grade 8.
 - **The typefaces must actually load.** They did not, for months, and a screenshot pass did *not*
   catch it. `@font-face` requests and `<link rel="preload" crossorigin>` are anonymous — no
   cookie — so `middleware.ts` saw no session and redirected all six woff2 files to `/login`, for
   signed-in users too. The browser received an HTML page where it expected a font and fell back
-  to Segoe UI and Constantia, which look close enough to pass a glance. The matcher now excludes
-  `fonts/`, `manifest.webmanifest` and `sw.js`; the check asserts `document.fonts.check()`, which
-  reports a face as usable rather than merely mentioned. The same redirect was silently costing
-  the PWA its manifest.
+  to Segoe UI and Constantia, which look close enough to pass a glance.
+  That middleware is deleted and cannot do it again, but the check stays: a packaged app has its
+  own way of failing this, because the typefaces are files in `public/` and an installer that
+  does not ship them fails identically, silently, on the registrar's machine and not on ours.
+  `document.fonts.check()` reports a face as *usable* rather than merely mentioned.
 - **Light must be the default even on a dark machine**, the switch must persist across a reload,
   and `data-theme` must be on `<html>` at `commit` — the last one is what proves the inline
   script beats the first paint, so a dark-mode user never gets a white flash. See §9.
 
-`npm test` stays as it was: unit checks only, no server, fast. `test:browser` is separate for the
-same reason `smoke` is — it needs something running.
+`npm test` stays as it was: unit checks only, no server, fast. `test:browser` is separate
+because it needs something running.
 
 ---
 
@@ -679,19 +734,22 @@ restyle is a token-and-property job rather than a re-markup.
 
 The first three survive the restyle untouched — they were never about how it looked.
 
-1. **Fonts are self-hosted, not linked.** The app has to render with no network — that was true
-   when it ran on the registrar's PC and it is true again now that offline is a feature. A font
-   CDN would defeat the service worker's precache and would also put a third party on the
-   request path of a page showing a child's personal data.
-   *The trap:* self-hosting puts the typefaces behind `middleware.ts`, and font requests carry no
-   cookie, so for months the middleware redirected all six to `/login` and every screen silently
-   rendered in Segoe UI. The matcher now excludes `fonts/`; §8 has the full account and the
-   regression check. Anything else added under `public/` that the browser fetches anonymously
-   needs the same exclusion.
+1. **Fonts are self-hosted, not linked.** The app has to render with no network. That was true
+   when it ran on the registrar's PC, true again when offline reading was a feature, and it is
+   now simply a fact: an installed application has no network at all. A font CDN would also put
+   a third party on the request path of a page showing a child's personal data.
+   *The trap it cost:* self-hosting put the typefaces behind `middleware.ts`, and font requests
+   carry no cookie, so for months the middleware redirected all six to `/login` and every screen
+   silently rendered in Segoe UI. That middleware is deleted. The regression check in §8 stays,
+   because a packaged app fails the same way for a different reason — an installer that does not
+   ship `public/fonts` looks fine on the developer's machine.
 2. **Grade-cell save state lives in the cell**, as an underline that fills, not in a floating
-   indicator. This is the hook #8 attaches to: §5 requires versioning per `term_subjects` row,
-   so one subject can be in conflict while thirty-nine are fine, and a single global indicator
-   cannot express that. The conflict state is already styled.
+   indicator. The original reason was sync: per-row versioning meant one subject could be in
+   conflict while thirty-nine were fine, and a global indicator cannot express that. Sync is
+   dissolved (§5) and the decision is still right for a plainer reason — forty cells autosaving
+   independently need forty answers, and a single spinner tells you that *something* saved.
+   The `conflict` state is styled and now unreachable; it costs a few lines of CSS and is the
+   only trace left of a feature that would have cost six weeks.
 3. **The seal and the term stamp are one function.** `promotionMark()` in
    `app/students/[id]/page.tsx` produces both. They were two expressions for a day and drifted
    immediately — the plate said "Incomplete" where the seal said "Not stated" about the same
@@ -702,19 +760,37 @@ The first three survive the restyle untouched — they were never about how it l
    toggle, which writes `data-theme` onto `<html>`. Following the OS instead would mean a laptop
    that dims itself in the evening hands its user a different-looking app than the machine
    beside it — on shared office PCs the surprise costs more than the convenience. The toggle
-   sits *outside* the signed-in block in `app/layout.tsx`, so it is reachable on the sign-in
-   page too; someone who works in the dark should not have to log in first to turn the lights
-   down.
+   sits *outside* the unlocked block in `app/layout.tsx`, so it is reachable on the unlock
+   screen too; someone who works in the dark should not have to open the records first to turn
+   the lights down.
 5. **The theme lives in `localStorage`, not a cookie.** It is a display preference, it never
-   needs to reach the server, and keeping it out of the cookie jar means signing out — which
-   purges the service worker's page cache, see §5a — does not also reset how the app looks for
-   the next person to sit down. A blocking inline script (`THEME_SCRIPT` in
-   `app/_components/theme-toggle.tsx`) applies it in `<head>` before first paint; an effect
-   cannot, because the root layout is a server component and dark users would see a white flash
-   on every navigation. `next.config.mjs` sets no `script-src`, so it needs no nonce — if a CSP
-   is ever tightened, that script is the thing that breaks.
+   needs to reach the server, and keeping it out of the cookie jar means locking the app does
+   not also reset how it looks for the next person to sit down. A blocking inline script
+   (`THEME_SCRIPT` in `app/_components/theme-toggle.tsx`) applies it in `<head>` before first
+   paint; an effect cannot, because the root layout is a server component and dark users would
+   see a white flash on every navigation. `next.config.mjs` sets no `script-src`, so it needs no
+   nonce — if a CSP is ever tightened, that script is the thing that breaks.
+
+### What the desktop conversion changed
+
+Less than expected, which was the point of doing it this way — the interface is the same Next.js
+application in a window.
+
+**Removed:** the `Live`/`Cached` connection chip and the freshness line (§5), the signed-in name
+and role plate in the masthead, and the Accounts screen. Their CSS went with them, along with
+`.grade-cell[data-locked]`, which disabled every grade cell while offline.
+
+**Added:** `/unlock`, which is `/login` with the username field taken out and a first-run
+variant that offers to *set* the password instead of asking for it; and `/settings`, holding the
+backup button, the password change, and a statement of where the records are kept. Settings took
+the masthead slot the Accounts link used to occupy.
+
+**Renamed:** `.login-*` became `.unlock-*`. `scripts/test-browser.ts` asserts on about a dozen
+class names, so a restyle is still a token-and-property job — but a rename is a two-file change,
+and the browser check is what catches forgetting the second file.
 
 ### Not built
 
 The sync surfaces designed in §5 — outbox drawer, conflict plate, provisional records, the LRN
-merge screen. They are designed and they are not implemented, pending the open question.
+merge screen. They were designed, never implemented, and the feature they belonged to no longer
+exists.

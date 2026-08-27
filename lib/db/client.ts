@@ -1,43 +1,45 @@
 /**
  * Where the database is, and how to reach it.
  *
- * One driver, two URLs. `@libsql/client` speaks the same async API to a local SQLite file and
- * to a hosted libSQL database, so development, every verification script, and the deployed app
- * all run the same code path:
+ * One `@libsql/client` driver pointed at one SQLite file on this machine:
  *
- *     file:.../data/pnhs.db        local dev and scripts - no network, works offline
- *     libsql://...turso.io         Vercel
+ *     file:%LOCALAPPDATA%/PNHS Records/pnhs.db   the installed app
+ *     file:./data/pnhs.db                        the repository, and every script
  *
- * That matters more than it looks. `npm run roundtrip` and `npm run check:ga` are the proof
- * that a printed SF10 matches the source form; if they exercised a different driver from the
- * one that ships, they would stop proving anything about production.
+ * `PNHS_DB_PATH` overrides both. That exists so tests can point the shared connection at a
+ * scratch file: without it, anything calling `getDb()` reaches the school's real records, and
+ * a test that writes is one mistake away from damaging them.
  *
- * libSQL is a SQLite dialect, so `db/schema.sql`, `PRAGMA user_version`, `GROUP_CONCAT` and
- * every SQL string in this project are carried across unchanged.
+ * ## Why the driver stayed after the hosted database went
+ *
+ * This used to branch on `TURSO_DATABASE_URL` and speak to a hosted libSQL database instead.
+ * That branch is gone with the rest of the hosted deployment, but the driver is not, for one
+ * reason worth keeping: `npm run roundtrip` and `npm run check:ga` are the proof that a
+ * printed SF10 matches the source form, and they only prove it while they exercise the driver
+ * that ships. Swapping to a second SQLite library now would make them prove something about
+ * code the app does not run.
+ *
+ * The async API is the cost of that, and it is already paid throughout `lib/db/queries.ts`.
+ * Against a local file every call resolves in microseconds.
  */
 
 import { createClient, type Client } from "@libsql/client";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { dataDir } from "../paths.ts";
 
 /**
- * The local file used when no hosted database is configured.
+ * The database file.
  *
- * `PNHS_DB_PATH` overrides it. That exists so tests can point the shared connection at a
- * scratch file: without it, anything calling `getDb()` reaches the school's real records, and a
- * test that writes is one mistake away from damaging them.
+ * Resolved through `dataDir()` so the installed app writes to `%LOCALAPPDATA%` rather than
+ * into its own read-only install directory. See lib/paths.ts for why that is not `%APPDATA%`.
  */
-export const LOCAL_DB_PATH = process.env.PNHS_DB_PATH || join(process.cwd(), "data", "pnhs.db");
+export const LOCAL_DB_PATH = process.env.PNHS_DB_PATH || join(dataDir(), "pnhs.db");
 
 declare global {
   // eslint-disable-next-line no-var
   var __pnhsClient: Client | undefined;
-}
-
-/** True when pointing at a hosted database rather than a file on this machine. */
-export function isRemote(): boolean {
-  return Boolean(process.env.TURSO_DATABASE_URL);
 }
 
 /**
@@ -45,18 +47,6 @@ export function isRemote(): boolean {
  * for scripts that need a second connection to a specific file.
  */
 export function createDbClient(path?: string): Client {
-  const remoteUrl = process.env.TURSO_DATABASE_URL;
-
-  if (remoteUrl && !path) {
-    const authToken = process.env.TURSO_AUTH_TOKEN;
-    if (!authToken) {
-      throw new Error(
-        "TURSO_DATABASE_URL is set but TURSO_AUTH_TOKEN is not. Both are required to reach the hosted database.",
-      );
-    }
-    return createClient({ url: remoteUrl, authToken });
-  }
-
   const file = path ?? LOCAL_DB_PATH;
   // libSQL opens the file but will not create the folder holding it.
   mkdirSync(dirname(file), { recursive: true });
@@ -68,7 +58,7 @@ export function createDbClient(path?: string): Client {
  * The shared connection.
  *
  * Cached on globalThis because Next.js reloads modules on every edit in development, and a
- * fresh client per reload leaks file handles against the local database.
+ * fresh client per reload leaks file handles against the database.
  */
 export function getClient(): Client {
   if (!globalThis.__pnhsClient) globalThis.__pnhsClient = createDbClient();

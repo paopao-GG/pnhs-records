@@ -6,22 +6,14 @@
  * come from the template itself; see lib/sf10/export.ts for why we write inputs only.
  */
 
-import { join } from "node:path";
 import { buildSf10Record } from "@/lib/db/to-sf10-record.ts";
 import { fillJhs, fillShs } from "@/lib/sf10/export.ts";
 import { getStudent } from "@/lib/db/queries.ts";
-import { requireUserForApi } from "@/lib/auth/current-user.ts";
+import { requireUnlockedForApi } from "@/lib/auth/guard.ts";
+import { appPath } from "@/lib/paths.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-/*
- * Run close to the school and to the database.
- *
- * `sin1` (Singapore) is the nearest Vercel region to Albay, and the Turso database sits in the
- * matching region. The default `iad1` is in Virginia, which puts a Pacific round trip on every
- * query - and a record page makes several before it can render.
- */
-export const preferredRegion = "sin1";
 
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
@@ -34,9 +26,9 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  // 401 rather than a redirect: a client following a redirect to the sign-in page would get
+  // 401 rather than a redirect: a client following a redirect to the unlock page would get
   // HTTP 200 and an HTML form where it asked for a workbook.
-  const auth = await requireUserForApi();
+  const auth = await requireUnlockedForApi();
   if (auth.response) return auth.response;
 
   const { id } = await params;
@@ -76,11 +68,7 @@ export async function GET(
     );
   }
 
-  const template = join(
-    process.cwd(),
-    "templates",
-    form === "jhs" ? "SF10-JHS.xlsx" : "SF10-SHS.xlsx",
-  );
+  const template = appPath("templates", form === "jhs" ? "SF10-JHS.xlsx" : "SF10-SHS.xlsx");
 
   let bytes: Uint8Array;
   try {

@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { ImportPanel } from "@/app/_components/import-panel.tsx";
 import { getImportHistory, countOpenIssues } from "@/lib/db/queries.ts";
-import { requireUser } from "@/lib/auth/current-user.ts";
+import { requireUnlocked } from "@/lib/auth/guard.ts";
 
 export const dynamic = "force-dynamic";
 
 export default async function ImportPage() {
-  await requireUser();
+  await requireUnlocked();
 
   const [history, openIssues] = await Promise.all([getImportHistory(12), countOpenIssues()]);
 

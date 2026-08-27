@@ -32,18 +32,30 @@ import {
 } from "@/lib/grading.ts";
 import { jhsFinalRatingIsComputed, jhsLearningAreas } from "@/lib/sf10/jhs-map.ts";
 import { shsSubjectsFor } from "@/lib/sf10/subject-templates.ts";
-import { requireUser } from "@/lib/auth/current-user.ts";
+import { requireUnlocked } from "@/lib/auth/guard.ts";
 import { deleteOriginal } from "@/lib/blob/store.ts";
 
 /*
- * Every action below begins with `requireUser()`.
+ * Every action below begins with `requireUnlocked()`.
  *
  * A server action is a public HTTP endpoint with a generated name - not an internal function
  * call. Hiding the button that invokes it protects nothing, exactly as hiding the SF10 print
- * button did not stop the print endpoint answering for a Form 137 learner. Middleware cannot
- * help either: it runs on the Edge runtime and cannot verify a cookie. If an action added later
- * touches learner data, it starts with this line too.
+ * button did not stop the print endpoint answering for a Form 137 learner. There is no
+ * middleware to fall back on either; it was deleted with the hosted deployment. If an action
+ * added later touches learner data, it starts with this line too.
+ *
+ * ## Why the history calls pass null
+ *
+ * `record_history` used to carry the id of whoever made each change. The app is now opened
+ * with one password on one machine and has nobody to name, so new rows are written with a
+ * null user. The history keeps the job that matters day to day — autosave writes as you type
+ * with no undo, and this is what makes a mistyped grade recoverable — and loses the
+ * attribution half. Rows written while accounts existed keep their user ids, which is why
+ * migration 4 keeps the `users` table.
  */
+
+/** Nobody to attribute a change to. See the note above. */
+const NO_USER = null;
 
 export interface SubjectEdit {
   id: number;
@@ -85,7 +97,7 @@ export interface RecordEdit {
  * browser - the client display and the stored value must not be able to drift apart.
  */
 export async function saveRecord(edit: RecordEdit): Promise<void> {
-  await requireUser();
+  await requireUnlocked();
 
   await updateStudent(edit.studentId, {
     lrn: edit.student.lrn.trim(),
@@ -154,7 +166,7 @@ export async function saveRecord(edit: RecordEdit): Promise<void> {
  * survives, and there is no sweeping that up.
  */
 export async function deleteRecord(studentId: number, confirmLrn: string): Promise<void> {
-  await requireUser();
+  await requireUnlocked();
 
   const student = await getStudent(studentId);
   if (!student) throw new Error("That learner record no longer exists.");
@@ -186,7 +198,7 @@ export async function saveSubjectField(
   field: "q1" | "q2" | "q3" | "q4" | "final_rating",
   value: number | null,
 ): Promise<void> {
-  const user = await requireUser();
+  await requireUnlocked();
 
   if (value != null && (!Number.isFinite(value) || value < 0 || value > 100)) {
     throw new Error(`Grade ${value} is outside 0–100.`);
@@ -210,7 +222,7 @@ export async function saveSubjectField(
     }
   }
 
-  const { studentId } = await updateSubjectField(subjectId, field, value, user.id);
+  const { studentId } = await updateSubjectField(subjectId, field, value, NO_USER);
   if (studentId) revalidatePath(`/students/${studentId}`);
 }
 
@@ -219,7 +231,7 @@ export async function saveLearnerInfo(
   studentId: number,
   fields: RecordEdit["student"],
 ): Promise<void> {
-  const user = await requireUser();
+  await requireUnlocked();
 
   const before = await getStudent(studentId);
   if (!before) throw new Error("That learner record no longer exists.");
@@ -238,7 +250,7 @@ export async function saveLearnerInfo(
     throw new Error("LRN, last name and first name are required.");
   }
 
-  await updateStudentWithHistory(studentId, next, before, user.id);
+  await updateStudentWithHistory(studentId, next, before, NO_USER);
 
   revalidatePath(`/students/${studentId}`);
   revalidatePath("/");
@@ -250,19 +262,19 @@ export async function addSubject(
   name: string,
   category: string | null,
 ): Promise<number> {
-  const user = await requireUser();
+  await requireUnlocked();
 
   const trimmed = name.trim();
   if (!trimmed) throw new Error("A subject needs a name.");
 
-  const id = await appendSubject(termId, trimmed, category, user.id);
+  const id = await appendSubject(termId, trimmed, category, NO_USER);
   revalidatePath("/");
   return id;
 }
 
 export async function removeSubject(subjectId: number): Promise<void> {
-  const user = await requireUser();
-  await deleteSubject(subjectId, user.id);
+  await requireUnlocked();
+  await deleteSubject(subjectId, NO_USER);
   revalidatePath("/");
 }
 
@@ -274,20 +286,20 @@ export async function removeSubject(subjectId: number): Promise<void> {
  * `swapSubjectOrder` for the mechanics.
  */
 export async function moveSubject(subjectId: number, direction: "up" | "down"): Promise<void> {
-  const user = await requireUser();
+  await requireUnlocked();
 
   // A server action is a public endpoint, so the argument is checked rather than trusted.
   if (direction !== "up" && direction !== "down") {
     throw new Error("A subject moves up or down.");
   }
 
-  const { studentId } = await swapSubjectOrder(subjectId, direction, user.id);
+  const { studentId } = await swapSubjectOrder(subjectId, direction, NO_USER);
   if (studentId) revalidatePath(`/students/${studentId}`);
   revalidatePath("/");
 }
 
 export async function markIssueResolved(issueId: number): Promise<void> {
-  await requireUser();
+  await requireUnlocked();
   await resolveIssue(issueId);
   revalidatePath("/import/review");
   revalidatePath("/import");
@@ -323,7 +335,7 @@ export interface NewStudentInput {
  * a pre-filled grid invites encoding a grade against the wrong row.
  */
 export async function createRecord(input: NewStudentInput): Promise<void> {
-  await requireUser();
+  await requireUnlocked();
 
   const level = Number(input.level);
   const isJhs = level <= 10;

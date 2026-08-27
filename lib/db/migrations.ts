@@ -22,10 +22,13 @@
  * the hosted database too: `ALTER TABLE` and the version write both roll back inside a libSQL
  * transaction.
  *
- * Back up before running against real data.
+ * Real data is backed up before any of this runs - see `snapshotBeforeMigrating()` below.
  */
 
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import type { Client, Transaction } from "@libsql/client";
+import { snapshotInto } from "./snapshot.ts";
 
 /** Either a plain connection or an open transaction - migrations run inside one. */
 type Runner = Pick<Client | Transaction, "execute">;
@@ -113,6 +116,36 @@ export const MIGRATIONS: Migration[] = [
        */
       await addColumnIfMissing(db, "enrollment_terms", "grading_periods", "INTEGER");
       await addColumnIfMissing(db, "students", "shs_semesters", "INTEGER");
+    },
+  },
+  {
+    version: 4,
+    name: "accounts removed",
+    up: async (db) => {
+      /*
+       * The app became a local Windows application opened with one password, so the two-role
+       * account system went with the hosted deployment it was built for.
+       *
+       * `sessions` and `login_attempts` are dropped because both are transient state with a
+       * replacement that needs no table: sessions now live in the server process, so closing
+       * the app ends them, and the lockout counter is a module-level array. The DB-backed
+       * versions existed specifically because a serverless host may run more than one
+       * instance and an in-process counter would count a fraction of the attempts. One local
+       * process inverts that reasoning exactly.
+       *
+       * `users` is deliberately KEPT, and it is the interesting half of this migration.
+       *
+       * Nothing reads it after this change. But `record_history.user_id` names real people on
+       * every row written while accounts existed, and those rows are the audit trail for
+       * every grade encoded in the last round. Dropping the table would turn each of them
+       * into an integer pointing at nothing - the history would survive and stop meaning
+       * anything. The column has no foreign key, so keeping the table costs one dormant table
+       * and buys the ability to still answer who changed a grade in August 2026.
+       *
+       * New rows are written with a null user_id. See recordChange() in lib/db/queries.ts.
+       */
+      await db.execute(`DROP TABLE IF EXISTS sessions`);
+      await db.execute(`DROP TABLE IF EXISTS login_attempts`);
     },
   },
 ];
@@ -203,13 +236,81 @@ export interface MigrationResult {
 }
 
 /**
+ * Copy the database aside before anything alters it.
+ *
+ * Returns the file written, or null when there was nothing worth copying.
+ *
+ * ## Why this exists
+ *
+ * This project's own rule is *"back up before running migrations against real data"*, and
+ * until now that depended on somebody remembering it at the one moment it matters — the first
+ * launch after an update, which happens on the registrar's machine and not on ours. A
+ * migration that fails is already safe: it rolls back and leaves the version untouched. The
+ * one this guards against is a migration that **succeeds and is wrong**, which no rollback
+ * catches and no test on our side can rule out.
+ *
+ * ## Why the destination is passed in rather than worked out here
+ *
+ * `runMigrations` is handed a `Client`, which does not say which file it is connected to. The
+ * test suite migrates scratch databases in a temp folder, and `openDb()` opens whatever path a
+ * script asks for. Resolving `dataDir()` in here would file backups of throwaway databases in
+ * the school's own records folder — so only callers that know they are working on real data
+ * ask for a snapshot.
+ */
+async function snapshotBeforeMigrating(
+  db: Client,
+  dir: string,
+  from: number,
+  to: number,
+): Promise<string | null> {
+  /*
+   * Nothing to protect on a new database.
+   *
+   * A fresh install reports version 0 with every migration pending, and an empty file is not
+   * worth a copy. Version > 0 means a database that has been migrated before, which means one
+   * that may hold records.
+   */
+  if (from === 0) return null;
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const folder = join(dir, `pre-upgrade-v${from}-to-v${to}-${stamp}`);
+  const file = join(folder, "pnhs.db");
+
+  try {
+    mkdirSync(folder, { recursive: true });
+    await snapshotInto(db, file);
+  } catch (err) {
+    /*
+     * Refuse to migrate. Altering data that could not be copied first is precisely what this
+     * function exists to prevent, and a full or read-only disk is the realistic cause.
+     */
+    throw new Error(
+      `Could not back the database up before upgrading it, so no migration was applied.\n` +
+        `Tried to write: ${file}\n` +
+        `${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  return file;
+}
+
+/**
  * Apply every migration newer than the database's recorded version.
  *
  * Called from applySchema() after the schema pass. Running it twice is a no-op the second time.
+ *
+ * `snapshotDir` opts this database in to a pre-upgrade backup; see above for why it is a
+ * parameter. Omit it and the behaviour is exactly as it was.
  */
-export async function runMigrations(db: Client): Promise<MigrationResult> {
+export async function runMigrations(db: Client, snapshotDir?: string): Promise<MigrationResult> {
   const from = await currentVersion(db);
   const applied: string[] = [];
+
+  const pending = [...MIGRATIONS].filter((m) => m.version > from);
+  if (snapshotDir && pending.length > 0) {
+    const to = Math.max(...pending.map((m) => m.version));
+    await snapshotBeforeMigrating(db, snapshotDir, from, to);
+  }
 
   for (const migration of [...MIGRATIONS].sort((a, b) => a.version - b.version)) {
     if (migration.version <= from) continue;

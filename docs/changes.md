@@ -1,8 +1,17 @@
 # Production backlog
 
-The MVP is working and holds real learner data. This is the agreed scope for taking it to
-production, ordered **easiest to hardest** — which is also close to the order it should be
-built.
+> ### The system became a local Windows app on 18 August 2026
+>
+> This backlog was written for a hosted web application with accounts. Everything in it was
+> built. Three items have since been **removed or dissolved** by the move to an Electron app
+> opened with one password — #6 accounts, #8 offline sync, #9 deployment — and #2 is worth
+> reopening because the reason it was deleted no longer holds.
+>
+> Each affected item says so in place. Nothing here is still waiting on a decision from the
+> school; the two live requests are in [patch-1.md](patch-1.md).
+
+The MVP is working and holds real learner data. This was the agreed scope for taking it to
+production, ordered **easiest to hardest** — which is also close to the order it was built.
 
 Architecture for the larger items is in
 [production-design.md](production-design.md). Current system design is in
@@ -25,7 +34,7 @@ Architecture for the larger items is in
 
 | Question | Decision |
 |---|---|
-| Offline access | **True offline editing with sync.** Encode with no network; sync on reconnect. |
+| Offline access | **True offline editing with sync.** Encode with no network; sync on reconnect. — *Overtaken: the app runs on the machine that holds the records, so there is no network to be without. See #8.* |
 | Form 137 | **Import as a searchable archive and keep the original file.** No reprinting a 1990s record onto a modern SF10 form. |
 | Autosave | **Saves silently as you type.** |
 | Adviser permissions | **Import, add, edit, delete, print.** Admin additionally manages adviser accounts. |
@@ -49,7 +58,10 @@ Almost everything below adds columns to tables already holding real learner data
 `deleted_by`, `version`, `curriculum`, `units_earned`, guardian fields, place of birth. Without
 a migration step, none of them arrive and nothing reports a problem.
 
-- `PRAGMA user_version` plus ordered, append-only steps applied on boot.
+- A schema version plus ordered, append-only steps applied on boot. **Built with a
+  `schema_version` table, not `PRAGMA user_version` as originally planned** — a hosted database
+  refuses to execute that write, which would have let every migration apply without being
+  recorded and then re-apply on the next boot. See production-design §3.
 - Back up before the first run against real data.
 
 Do this before #4, #6 or #7. See production-design §3.
@@ -69,17 +81,28 @@ term for that form type.
 
 ---
 
-## 2. Folder chooser, import only new files · **DONE, then REMOVED**
+## 2. Folder chooser, import only new files · **DONE, then REMOVED · worth reopening**
 
 Built as a server-side folder browser, and deleted again when the target became a serverless
 host: it enumerated `process.cwd()`, which there is the deployment bundle rather than the
-school's archive. There is nothing on that disk to scan.
+school's archive. There was nothing on that disk to scan.
 
 Import is now the file picker alone. "Only new" still works and always did — files are
 identified by SHA-256, so re-importing takes in nothing already present.
 
 Directory walking survives in `scripts/_local-files.ts` for the scripts, which run on a real
-machine pointed at real folders. It is only the *server* that must not.
+machine pointed at real folders.
+
+> **The reason this was deleted is gone.** The server is now the registrar's own PC, and
+> `process.cwd()` is a real folder on a real disk holding the real archive. The original design
+> works again, and picking a thousand files out of a browser dialog is exactly the chore it was
+> written to remove.
+>
+> Reopening it well means the Electron shell rather than the old server-side browser:
+> `dialog.showOpenDialog` with `properties: ["openDirectory"]` gives a native folder picker and
+> a path, which is a better interface than an HTML tree ever was. That needs a preload bridge —
+> `electron/preload.cjs` is deliberately empty today, and this is the first thing that would
+> justify putting something in it.
 
 ---
 
@@ -130,7 +153,18 @@ all resolve.
 
 ---
 
-## 6. Accounts: admin and adviser · **DONE**
+## 6. Accounts: admin and adviser · **DONE, then REMOVED**
+
+> Built, ran with real learner data, and removed with the hosted deployment. The app is opened
+> with **one password** and has no accounts, no roles and no Accounts screen. `sessions` and
+> `login_attempts` are dropped by migration 4; `users` is deliberately kept so
+> `record_history.user_id` still names somebody on rows written while accounts existed.
+>
+> The design, the corrections the build made to it, and what reinstating it would cost are in
+> [production-design.md](production-design.md) §4. `docs/patch-1.md` asks for roles back — see
+> that file for why one password cannot provide them.
+
+The item as it was built:
 
 - `users` and `sessions` tables; passwords hashed with `scrypt` from `node:crypto` — **no new
   dependency**.
@@ -222,7 +256,19 @@ Needs #0.
 
 ---
 
-## 8. Offline editing with sync · ~4–6 weeks · **read-only half DONE, sync still open**
+## 8. Offline editing with sync · ~4–6 weeks · **DISSOLVED**
+
+> The largest item in this backlog, and it was never built. The read-only half shipped — service
+> worker, `Live`/`Cached` chrome, a freshness timestamp, editing visibly disabled while cached —
+> and has now been deleted along with the sync design it was the first phase of.
+>
+> **Open question 1 below was never answered, and stopped mattering.** The app runs on the
+> machine that holds the records. There is no server to be away from and no network to lose, so
+> the outbox, per-row versioning, conflict resolution, offline record creation and the LAN HTTPS
+> problem are all void rather than deferred. See [production-design.md](production-design.md) §5,
+> including the one thing that would bring it all back: a second machine.
+
+The item as it was designed:
 
 > **The cheap column of the table below now exists** — service worker, cached records, a
 > permanent `Live`/`Cached` indicator, a freshness timestamp, and editing visibly disabled while
@@ -266,7 +312,22 @@ See [production-design.md](production-design.md) §5 for the full design.
 
 ---
 
-## 9. Deployment · **DONE (code side)**
+## 9. Deployment · **DONE, then REPLACED**
+
+> Vercel `sin1`, a Turso database and a Cloudflare R2 bucket. All three are gone. The system
+> ships as `PNHS-Records-Setup-<version>.exe` and stores everything in `%LOCALAPPDATA%\PNHS
+> Records`. See [production-design.md](production-design.md) §6.
+>
+> **The credentials outlive the deployment.** The Turso auth token and three R2 values are live
+> until somebody revokes them at the provider; deleting `.env.local` and `turso.txt` does
+> nothing about that.
+>
+> One line from this item aged into its opposite. "Nothing may assume a writable disk" drove
+> three phases of work, and the disk is now the point. What survived the reversal is everything
+> it forced into a clean seam: `lib/blob/store.ts` keeps its key format and its traversal
+> guards, and `lib/db/client.ts` was already the single place the database location is decided.
+
+The item as it was built:
 
 Deployed to Vercel rather than a home server: the app on Vercel `sin1`, the database on Turso,
 original files in a private Cloudflare R2 bucket. See
@@ -326,15 +387,25 @@ real bucket, and by checking all 20 stored originals still read back.
 
 ## Open questions
 
-Carried from the review; each one changes work that follows.
+All four are now closed, three of them by events rather than by answers. Kept because "this was
+decided" is more useful to the next person than a blank space.
 
-1. **What is offline actually for** — off-site laptops, or insurance against downtime? Decides
-   whether #8 is 4–6 weeks or 2–3 days.
-2. **`PALIZA`'s 16 tables** — transferee, two schools, or two learners in one file? The one
-   thing that could blow the Form 137 estimate.
-3. **Who is admin when the registrar is away?** Still open, and now visible in the app: the
-   Accounts page warns while only one admin exists. Only an admin can issue accounts or reset a
-   password, so a lone admin who is away is a system nobody can administer.
+1. ~~**What is offline actually for** — off-site laptops, or insurance against downtime?~~
+   **Void.** The records are on the machine that reads them. See #8.
+2. ~~**`PALIZA`'s 16 tables** — transferee, two schools, or two learners in one file?~~
+   **Settled by the build: one learner's form duplicated inside a single file.** The first copy
+   is imported and the rest flagged.
+3. ~~**Who is admin when the registrar is away?**~~ **Void.** There are no admins. Anyone with
+   the password can do everything, which answers the availability question and raises a
+   different one — see the note on attribution in [production-design.md](production-design.md)
+   §4.
 4. ~~Should advisers see every learner in the school?~~ **Settled: every learner.** No
-   adviser-to-section mapping exists, sections change yearly, and a small school covers for
-   itself. Access is attributable through `record_history`.
+   adviser-to-section mapping existed, sections change yearly, and a small school covers for
+   itself. It is now the only possible arrangement.
+
+### Live requests
+
+Both are in [patch-1.md](patch-1.md): a **report card (SF9)** import and print path, which needs
+the school's blank form and a few filled examples before it can be specified; and a request for
+**Admin/Adviser roles**, which predates the single-password design and would mean reinstating
+accounts.

@@ -1,29 +1,28 @@
 /**
  * Applies the schema and any pending migrations, then reports what happened.
  *
- * This is the deliberate setup step. The app used to do it on every boot, which was free when
- * the database was a local file owned by one long-lived process. It is not free against a
- * hosted database reached over the network from a host that cold-starts.
+ * The app applies the schema itself on first use, so this is not something an installed copy
+ * ever needs - it exists for the repository, where it is useful to migrate a database without
+ * starting a server, and to see what a migration actually did before trusting it with real
+ * records.
  *
- * Runs against whatever `TURSO_DATABASE_URL` points at, or the local file when it is unset -
- * so this is also the command that migrates production.
- *
- *   npm run db:migrate
- *
- * **Back up first when running against real data.** A migration that fails leaves the version
- * untouched, but that is a guarantee about consistency, not about the data being recoverable.
+ * It targets the real local database, so it asks for a pre-upgrade snapshot the same way the
+ * app does. A migration that fails already leaves the version untouched, but that is a
+ * guarantee about consistency, not about the data being recoverable from a migration that
+ * succeeded and was wrong.
  *
  * Run: npm run db:migrate
  */
 
+import { join } from "node:path";
 import { applySchema } from "../lib/db/index.ts";
-import { createDbClient, isRemote, LOCAL_DB_PATH } from "../lib/db/client.ts";
+import { createDbClient, LOCAL_DB_PATH } from "../lib/db/client.ts";
+import { dataDir } from "../lib/paths.ts";
 
-const target = isRemote() ? process.env.TURSO_DATABASE_URL : LOCAL_DB_PATH;
-console.log(`\n  database : ${target}`);
+console.log(`\n  database : ${LOCAL_DB_PATH}`);
 
 const db = createDbClient();
-const result = await applySchema(db);
+const result = await applySchema(db, { snapshotDir: join(dataDir(), "backups") });
 
 console.log(`  version  : ${result.from} -> ${result.to}`);
 if (result.applied.length === 0) {

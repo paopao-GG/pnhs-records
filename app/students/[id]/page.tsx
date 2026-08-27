@@ -14,12 +14,11 @@ import {
   type SubjectRow,
   type TermRow,
 } from "@/lib/db/queries.ts";
-import { requireUser } from "@/lib/auth/current-user.ts";
+import { requireUnlocked } from "@/lib/auth/guard.ts";
 import { DeleteRecord } from "@/app/_components/delete-record.tsx";
 import { PrintPanel } from "@/app/_components/print-panel.tsx";
 import { Guilloche } from "@/app/_components/guilloche.tsx";
 import { Seal, type SealTone } from "@/app/_components/seal.tsx";
-import { CachedNotice } from "@/app/_components/connection-state.tsx";
 import {
   exactFinalRating,
   finalRating,
@@ -298,7 +297,7 @@ function TermCard({
 }
 
 export default async function StudentPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireUser();
+  await requireUnlocked();
 
   const { id } = await params;
   const studentId = Number(id);
@@ -432,7 +431,6 @@ export default async function StudentPage({ params }: { params: Promise<{ id: st
       <div className="rail-body">
         {/* Stamped as the server builds the page. If this HTML later comes back out of the
             service worker's cache, that is the moment the copy was taken. */}
-        <CachedNotice renderedAt={new Date().toISOString()} />
 
         {isOldRecord && (
           <div className="notice">

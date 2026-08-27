@@ -27,11 +27,11 @@ import { join } from "node:path";
 /*
  * Point the shared connection at a scratch file BEFORE importing anything that touches it.
  * `client.ts` resolves the path once, at module load; the dynamic imports below are what make
- * that ordering guaranteed rather than incidental. See test-auth.ts for the same guard.
+ * that ordering guaranteed rather than incidental. See test-unlock.ts for the same guard.
  */
 const scratchDir = mkdtempSync(join(tmpdir(), "pnhs-order-"));
 process.env.PNHS_DB_PATH = join(scratchDir, "order-test.db");
-delete process.env.TURSO_DATABASE_URL;
+process.env.PNHS_DATA_DIR = scratchDir;
 
 const { applySchema } = await import("../lib/db/index.ts");
 const { getClient, LOCAL_DB_PATH } = await import("../lib/db/client.ts");

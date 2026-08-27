@@ -16,6 +16,7 @@
 
 import { randomBytes, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
+import { MIN_PASSWORD_LENGTH } from "./policy.ts";
 
 const scrypt = promisify(scryptCb) as (
   password: string,
@@ -31,7 +32,11 @@ const P = 1;
 const KEYLEN = 64;
 const MAXMEM = 64 * 1024 * 1024;
 
-export const MIN_PASSWORD_LENGTH = 12;
+/*
+ * Re-exported so server-side callers have one place to import from. The value itself lives in
+ * policy.ts, which has no imports, because the client needs it and must not reach this module.
+ */
+export { MIN_PASSWORD_LENGTH };
 
 export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16);

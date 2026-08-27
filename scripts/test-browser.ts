@@ -1,23 +1,13 @@
 /**
  * The properties only a real browser can prove.
  *
- * `scripts/smoke.ts` argues — correctly — that a browser is the wrong tool for checking a
- * deployment, because every guarantee worth checking after a deploy is an HTTP fact and a
- * browser only adds a dependency and tests React. Nothing here contradicts that. This file
- * exists for the opposite category: behaviour that lives entirely in the client and that no
- * amount of `fetch` can see.
- *
- * Three of these were written because the redesign shipped them broken and a screenshot pass
- * caught them by eye:
+ * These cover behaviour that lives entirely in the client and that no amount of `fetch` can
+ * see. Most of them were written because something shipped broken and was caught by eye:
  *
  *  - **Arrow keys must not change a grade.** On `<input type="number">` the up and down arrows
  *    increment the value by default. The encoding grid binds them to movement instead, so a
  *    stray keypress over a mark on a permanent record moves the cursor rather than silently
  *    rewriting the mark and autosaving it 700ms later. This is a safety property.
- *  - **The offline lock must be able to release itself.** Going offline disables every grade
- *    cell. The first version could only come back on a `navigator` "online" event, so one
- *    failed request left a registrar on a dead grid with no event coming — the browser had
- *    never thought it was offline. A probe now proves the way back.
  *  - **Vertical movement must stop at the term boundary.** Holding the down arrow past the last
  *    subject of Grade 7 must not land in Grade 8. A grade typed into the wrong year is the
  *    error the grid exists to prevent.
@@ -26,13 +16,12 @@
  *
  * These checks type into grade cells, so they must never reach the school's records. The
  * script builds a scratch database, seeds one learner into it, and starts its own dev server
- * pointed at that file. It deliberately does not accept a URL the way `smoke.ts` does: a
- * server someone else started is a server pointing at who-knows-what, and "who-knows-what" here
- * includes production.
+ * pointed at that file. It deliberately does not accept a URL: a server someone else started
+ * is a server pointing at who-knows-what.
  *
- * The first check after sign-in asserts the learner index holds exactly the one fixture record.
- * That is a real assertion about the UI and it doubles as proof that the server under test is
- * not the school's database.
+ * The first check after unlocking asserts the learner index holds exactly the one fixture
+ * record. That is a real assertion about the UI and it doubles as proof that the server under
+ * test is not the school's database.
  *
  * ## Chrome, not a downloaded browser
  *
@@ -52,17 +41,17 @@ import { createRequire } from "node:module";
 /*
  * Point the shared connection at a scratch file BEFORE importing anything that touches it.
  * `client.ts` resolves the path once, at module load; the dynamic imports below are what make
- * that ordering guaranteed rather than incidental. See test-auth.ts for the same guard.
+ * that ordering guaranteed rather than incidental. See test-unlock.ts for the same guard.
  */
 const scratchDir = mkdtempSync(join(tmpdir(), "pnhs-browser-"));
 const dbPath = join(scratchDir, "browser-test.db");
 process.env.PNHS_DB_PATH = dbPath;
-delete process.env.TURSO_DATABASE_URL;
+process.env.PNHS_DATA_DIR = scratchDir;
 
 const { applySchema } = await import("../lib/db/index.ts");
 const { getClient, LOCAL_DB_PATH } = await import("../lib/db/client.ts");
 const q = await import("../lib/db/queries.ts");
-const { createUser } = await import("../lib/db/users.ts");
+const { setPassword } = await import("../lib/auth/unlock.ts");
 
 if (!LOCAL_DB_PATH.startsWith(scratchDir)) {
   console.error(`\n  refusing to run: the database is ${LOCAL_DB_PATH}, not a scratch file\n`);
@@ -72,7 +61,6 @@ if (!LOCAL_DB_PATH.startsWith(scratchDir)) {
 const require = createRequire(import.meta.url);
 const PORT = Number(process.env.PNHS_BROWSER_PORT ?? 3931);
 const BASE = `http://localhost:${PORT}`;
-const USERNAME = "browsercheck";
 const PASSWORD = "a quiet afternoon in the records room";
 
 let passed = 0;
@@ -108,12 +96,9 @@ async function seed(): Promise<void> {
   const db = getClient();
   await applySchema(db);
 
-  await createUser({
-    username: USERNAME,
-    fullName: "Browser Check",
-    password: PASSWORD,
-    role: "admin",
-  });
+  // The app is opened with one password and has no accounts. Setting it here is what the
+  // first-run screen does; these checks start from an installed machine, not a fresh one.
+  await setPassword(PASSWORD);
 
   const studentId = await q.createStudent({
     lrn: "999900001111",
@@ -168,8 +153,11 @@ async function startServer(): Promise<ChildProcess> {
   // Annotated so the delete below is legal: an inferred object literal has no such property,
   // and dropping it matters — .env.local naming a hosted database would otherwise send a test
   // that types into grade cells at the school's real records.
-  const env: NodeJS.ProcessEnv = { ...process.env, PNHS_DB_PATH: dbPath };
-  delete env.TURSO_DATABASE_URL;
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PNHS_DB_PATH: dbPath,
+    PNHS_DATA_DIR: scratchDir,
+  };
 
   const child = spawn(process.execPath, [nextBin, "dev", "-p", String(PORT)], {
     env,
@@ -179,7 +167,7 @@ async function startServer(): Promise<ChildProcess> {
   const deadline = Date.now() + 90_000;
   while (Date.now() < deadline) {
     try {
-      const res = await fetch(`${BASE}/login`);
+      const res = await fetch(`${BASE}/unlock`);
       if (res.ok) return child;
     } catch {
       /* not up yet */
@@ -225,15 +213,29 @@ async function run(): Promise<void> {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
 
-  // --- sign in ------------------------------------------------------------
-  await page.goto(`${BASE}/login`, { waitUntil: "networkidle" });
-  await page.fill("#username", USERNAME);
+  // --- unlock -------------------------------------------------------------
+  /*
+   * A page behind the guard must send an unauthenticated visitor here rather than render.
+   * There is no middleware any more, so this is the only thing standing in front of every
+   * record - worth asserting before anything else.
+   */
+  await page.goto(`${BASE}/students/1`, { waitUntil: "domcontentloaded" });
+  ok("a locked app redirects to the unlock screen", page.url() === `${BASE}/unlock`);
+
+  await page.goto(`${BASE}/unlock`, { waitUntil: "networkidle" });
+  ok("the unlock screen asks for a password and not a username", !(await page.isVisible("#username")));
+
+  await page.fill("#password", "the wrong phrase entirely");
+  await page.click("button[data-variant=primary]");
+  await page.waitForSelector(".unlock-error");
+  ok("a wrong password is refused", page.url().startsWith(`${BASE}/unlock`));
+
   await page.fill("#password", PASSWORD);
   await Promise.all([
     page.waitForURL(`${BASE}/`),
     page.click("button[data-variant=primary]"),
   ]);
-  ok("sign in reaches the learner index", page.url() === `${BASE}/`);
+  ok("the password reaches the learner index", page.url() === `${BASE}/`);
 
   /*
    * Both a UI assertion and the guard described at the top of this file. If the server under
@@ -331,48 +333,6 @@ async function run(): Promise<void> {
   await page.waitForSelector('.grade-cell[data-state="saved"]', { timeout: 10_000 });
   ok("a saved cell reports it in the cell", true);
 
-  // --- offline ------------------------------------------------------------
-  await page.evaluate(() => navigator.serviceWorker.ready);
-  ok("the service worker registers", true);
-
-  await context.setOffline(true);
-  await page.waitForFunction(
-    () => document.querySelector(".conn")?.getAttribute("data-state") === "cached",
-    undefined,
-    { timeout: 10_000 },
-  );
-  ok("the masthead reports a cached copy", true);
-  ok("the freshness line appears", await page.isVisible(".freshness"));
-  ok(
-    "every grade cell is disabled offline",
-    await page.locator(".grade-input").first().isDisabled(),
-  );
-
-  // A record never opened while connected has nothing to fall back to.
-  const offlineRes = await page.goto(`${BASE}/students/424242`, { waitUntil: "domcontentloaded" });
-  ok(
-    "an uncached page offline gets the fallback, not a dead tab",
-    (await page.content()).includes("not saved for offline use"),
-    `status ${offlineRes?.status()}`,
-  );
-
-  /*
-   * The regression that nearly shipped. Coming back must not require a reload: the probe in
-   * online-store.ts has to notice the server answering and release the grid on its own.
-   */
-  await context.setOffline(false);
-  await page.goto(`${BASE}${href}/edit`, { waitUntil: "networkidle" });
-  await page.waitForFunction(
-    () => document.querySelector(".conn")?.getAttribute("data-state") === "live",
-    undefined,
-    { timeout: 20_000 },
-  );
-  ok("coming back online releases the lock without a reload", true);
-  ok(
-    "grade cells are editable again",
-    await page.locator(".grade-input").first().isEnabled(),
-  );
-
   /*
    * --- the typefaces actually arrive --------------------------------------
    *
@@ -382,11 +342,15 @@ async function run(): Promise<void> {
    * users too. The browser got an HTML page where it expected a font and quietly fell back to
    * Segoe UI, which looks close enough that a screenshot pass does not catch it.
    *
-   * `document.fonts.check` is the assertion that would have: it reports whether a face is loaded
-   * and usable, not merely whether a rule mentioning it was parsed. It runs on the editor rather
-   * than on /login because a face the page has no text for is never fetched at all — and the
-   * editor is the one screen that sets all three: the masthead in Fraunces, its own chrome in
-   * Atkinson, every grade cell in Plex Mono.
+   * That middleware is deleted and cannot do it again. The check stays because the failure it
+   * describes is about a font arriving as something else, and a packaged app has its own way of
+   * getting that wrong: the typefaces are files in `public/`, and an installer that does not
+   * ship them fails exactly this way, silently, on the registrar's machine and not on ours.
+   *
+   * `document.fonts.check` is the assertion that catches it: it reports whether a face is
+   * loaded and usable, not merely whether a rule mentioning it was parsed. It runs on the
+   * editor because that is the one screen setting all three — the masthead in Fraunces, its own
+   * chrome in Atkinson, every grade cell in Plex Mono.
    */
   await page.evaluate(() => document.fonts.ready);
   for (const [label, face] of [
@@ -429,7 +393,7 @@ async function run(): Promise<void> {
       bg: getComputedStyle(document.body).backgroundColor,
     }));
 
-  await themePage.goto(`${BASE}/login`, { waitUntil: "networkidle" });
+  await themePage.goto(`${BASE}/unlock`, { waitUntil: "networkidle" });
   const fresh = await themeOf();
   ok("a first visit is light even on a dark machine", fresh.attr === "", `data-theme=${fresh.attr}`);
 
@@ -453,12 +417,34 @@ async function run(): Promise<void> {
    * The reason the theme script is inline and blocking rather than an effect. At `commit` the
    * document has barely started parsing; if the attribute is already there, the first paint is
    * dark and a dark-mode user never sees a white flash on navigation.
+   *
+   * `commit` fires when the response is committed, which can be *before* any markup has been
+   * parsed — and against a dev server compiling the route for the first time, usually is. Read
+   * naively the assertion then passes or fails on whether the document was empty, which tests
+   * nothing either way. So this waits for the first sign of parsing and asserts on the same
+   * tick: `<body>` must not exist yet, and `data-theme` must already be set. That is the real
+   * property — the attribute is there before there is anything to paint.
    */
   const early = await themeCtx.newPage();
-  await early.goto(`${BASE}/login`, { waitUntil: "commit" });
+  await early.goto(`${BASE}/unlock`, { waitUntil: "commit" });
+  const atFirstParse = await early.waitForFunction(
+    () =>
+      document.head?.childElementCount
+        ? {
+            theme: document.documentElement.dataset.theme ?? "",
+            bodyExists: Boolean(document.body),
+          }
+        : null,
+    undefined,
+    { timeout: 10_000, polling: "raf" },
+  );
+  const early_state = (await atFirstParse.jsonValue()) as { theme: string; bodyExists: boolean };
   ok(
     "the theme is applied before the page paints",
-    (await early.evaluate(() => document.documentElement.dataset.theme ?? "")) === "dark",
+    early_state.theme === "dark",
+    `data-theme=${early_state.theme} at first parse (body ${
+      early_state.bodyExists ? "already" : "not yet"
+    } present)`,
   );
 
   await themePage.click(".theme-toggle");
@@ -469,7 +455,7 @@ async function run(): Promise<void> {
   // --- reduced motion -----------------------------------------------------
   const still = await browser.newContext({ reducedMotion: "reduce" });
   const stillPage = await still.newPage();
-  await stillPage.goto(`${BASE}/login`, { waitUntil: "networkidle" });
+  await stillPage.goto(`${BASE}/unlock`, { waitUntil: "networkidle" });
   const animation = await stillPage
     .locator(".card")
     .first()

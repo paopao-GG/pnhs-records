@@ -1,12 +1,10 @@
 /**
- * Object storage: keys, guards, and the round trip.
+ * Where imported originals are stored: keys, guards, and the round trip.
  *
- * Runs against the disk backing by default so it needs no network and no Cloudflare account -
- * the same reason the database tests run against a scratch file. Point it at a real bucket with
- * the R2 settings and it exercises exactly the same assertions:
- *
- *   npm run test:blob                                       (disk)
- *   node --env-file=.env.local scripts/test-blob.ts          (R2)
+ * The key format and the guards outlived the object store they were written for. They are not
+ * about buckets - `isBlobKey()` stops a value read back out of the database naming a file we
+ * never wrote, and `suffix()` rebuilds an extension rather than filtering one because
+ * filtering turned `"../../evil"` into a key that passed nothing and lost the archive copy.
  *
  * Run: npm run test:blob
  */
@@ -18,14 +16,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 /*
- * The disk backing writes under `process.cwd()/data`, so run from a scratch folder unless a
- * bucket is configured. Otherwise these tests would drop objects into the school's own
- * originals directory.
+ * Point the store at a scratch folder. Without this these tests would write into - and then
+ * delete out of - the school's own originals directory.
  */
-const usingR2 = Boolean(process.env.R2_BUCKET);
 const scratchDir = mkdtempSync(join(tmpdir(), "pnhs-blob-"));
-const projectDir = process.cwd();
-if (!usingR2) process.chdir(scratchDir);
+process.env.PNHS_DATA_DIR = scratchDir;
 
 const {
   blobKey,
@@ -53,7 +48,8 @@ const store = async (content: string, ext = ".docx") => {
   return { key, bytes };
 };
 
-console.log(`\n  backing: ${usingR2 ? `R2 (${process.env.R2_BUCKET})` : "disk"}`);
+console.log(`
+  storing under: ${scratchDir}`);
 
 check("a stored file reads back byte-identical", async () => {
   const { key, bytes } = await store("a Form 137 stands in for the learner's whole record");
@@ -202,10 +198,6 @@ for (const { name, fn } of checks) {
   }
 }
 
-// Leave no litter in a real bucket.
-if (usingR2) for (const key of new Set(written)) await deleteOriginal(key);
-
-process.chdir(projectDir);
 try {
   rmSync(scratchDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 } catch {

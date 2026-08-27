@@ -9,6 +9,9 @@ data/
 # Generated SF10 files from the spike and export checks.
 spike-output/
 
+# The packaged installer. It is built from the tree, and it is large.
+dist/
+
 # Secrets. Broad on purpose: .env.local was covered and .env.production.local was not,
 # which is exactly the file that holds production credentials.
 #
@@ -17,6 +20,9 @@ spike-output/
 .env
 .env.*
 !.env.example
+
+# Held the hosted database's URL and auth token. The deployment is gone; the line stays so a
+# stale copy on somebody's machine cannot be committed by accident.
 turso.txt
 # Database backups. Learner data, same rule as data/.
 backups/

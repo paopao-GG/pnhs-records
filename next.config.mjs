@@ -1,21 +1,39 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // The app reads the SF10 templates and writes the SQLite file from the server at runtime,
-  // so those paths must stay on disk rather than being bundled.
+  /*
+   * Build a self-contained server the Electron main process can spawn.
+   *
+   * `standalone` emits `.next/standalone/server.js` with only the dependencies actually
+   * reached, which is what makes the installer a sensible size and means the shipped app does
+   * not carry `node_modules` whole.
+   */
+  output: "standalone",
+
+  /*
+   * Two folders are read from disk at runtime and neither can be inferred.
+   *
+   * `templates/` holds the SF10 workbooks the exporter fills, and `db/schema.sql` is read by
+   * lib/db/index.ts on first use. Both are opened through a path built at runtime, so Next's
+   * file tracing cannot see the dependency and would leave them out of the bundle - where the
+   * failure is a fresh install throwing `no such table` or `ENOENT` on the first print.
+   *
+   * Scoped to every route rather than `/api/students/**`, because lib/db is imported by every
+   * page, not only by the route that prints.
+   */
   outputFileTracingIncludes: {
-    "/api/students/**": ["./templates/**"],
+    "/**": ["./templates/**", "./db/**"],
   },
 
   /**
    * Headers that hold for every response.
    *
-   * `frame-ancestors 'none'` is the one that earns its place: deleting a learner is a click on
-   * a page reachable by URL, and a framed copy of that page on another site is how a signed-in
-   * registrar is made to click something they cannot see. `X-Frame-Options` says the same thing
-   * to anything that predates CSP.
+   * `frame-ancestors 'none'` is the one that earns its place, and it still does with the app
+   * on loopback: any page in any browser on this machine can frame `http://127.0.0.1:<port>`,
+   * and deleting a learner is a click on a page reachable by URL. `X-Frame-Options` says the
+   * same thing to anything that predates CSP.
    *
-   * HSTS is absent on purpose - `vercel.app` is in the browser preload list, so it is already
-   * enforced and setting it here would only be a claim we cannot make about a future domain.
+   * No HSTS: the app is served over plain HTTP to 127.0.0.1, where there is no transport to
+   * upgrade and the header would only be a claim about a domain that does not exist.
    */
   async headers() {
     return [

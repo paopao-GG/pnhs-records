@@ -1,12 +1,11 @@
 import { listStudents } from "@/lib/db/queries.ts";
-import { requireUser } from "@/lib/auth/current-user.ts";
+import { requireUnlocked } from "@/lib/auth/guard.ts";
 import { StudentSearch } from "./_components/student-search.tsx";
-import { CachedNotice } from "./_components/connection-state.tsx";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  await requireUser();
+  await requireUnlocked();
 
   const students = await listStudents();
 
@@ -23,7 +22,6 @@ export default async function HomePage() {
        * The index is cached whole, so search keeps working offline. What it cannot promise is
        * that a learner added in the last hour is in it — hence the timestamp.
        */}
-      <CachedNotice renderedAt={new Date().toISOString()} />
 
       <StudentSearch students={students} />
 

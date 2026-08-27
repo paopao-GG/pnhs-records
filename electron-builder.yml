@@ -1,0 +1,58 @@
+appId: ph.deped.pnhs.records
+productName: PNHS Records
+copyright: Pantao National High School
+
+directories:
+  output: dist
+  buildResources: build
+
+# What goes into the installer.
+#
+# `.next/standalone` is the server Next built; `.next/static` and `public` are the assets it
+# serves but does not bundle. `templates/` and `db/schema.sql` are read from disk at runtime and
+# would otherwise be missing — see outputFileTracingIncludes in next.config.mjs for the same
+# problem stated from the other side.
+# `.next/standalone` already contains `.next/static` and `public`, copied there by
+# scripts/prepare-standalone.ts - the standalone server resolves both relative to itself.
+# `templates/` and `db/schema.sql` are listed separately because appPath() in lib/paths.ts
+# resolves them against the bundle root, not against the server directory.
+files:
+  - electron/**
+  - .next/standalone/**
+  - templates/**
+  - db/schema.sql
+  - package.json
+
+asar: true
+
+# Node cannot execute a script from inside an asar archive as a spawned process, and the whole
+# design here is Electron spawning `server.js` as a child. Leaving these unpacked is what makes
+# that work; `appDirectory()` in electron/main.js resolves to the unpacked folder to match.
+asarUnpack:
+  - .next/**
+  - templates/**
+  - db/**
+
+win:
+  target:
+    - nsis
+  artifactName: PNHS-Records-Setup-${version}.${ext}
+
+nsis:
+  # Per-user, so installing needs no administrator. It also keeps the app out of Program Files,
+  # which matters less now that nothing is written beside the executable, but still avoids a UAC
+  # prompt on a machine the registrar may not be an administrator of.
+  perMachine: false
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: PNHS Records
+
+  # The uninstaller must not touch %LOCALAPPDATA%\PNHS Records.
+  #
+  # That folder holds the school's permanent records — thousands of children's academic
+  # histories and every imported original document. An uninstaller that deletes them is a
+  # data-loss bug wearing a checkbox, and "the user chose to uninstall" is not consent to
+  # destroy the only copy of the data. Removal is a deliberate act with a file manager.
+  deleteAppDataOnUninstall: false

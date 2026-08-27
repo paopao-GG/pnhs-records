@@ -1,20 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import "./globals.css";
-import { getCurrentUser } from "@/lib/auth/current-user.ts";
-import { signOut } from "./login/actions.ts";
-import {
-  ConnectionState,
-  ServiceWorkerRegistrar,
-  SignOutButton,
-} from "./_components/connection-state.tsx";
+import { getUnlockState } from "@/lib/auth/guard.ts";
+import { lockApp } from "./unlock/actions.ts";
+import { LockButton } from "./_components/lock-button.tsx";
 import { THEME_SCRIPT, ThemeToggle } from "./_components/theme-toggle.tsx";
 
 export const metadata: Metadata = {
   title: "PNHS Records — SF10 Permanent Records",
   description: "Learner permanent record system for Pantao National High School",
-  // This holds the personal data of children and is reachable on a public URL. It has no
-  // business in a search index.
+  // Nothing should index this. The app is not on a public URL any more, but the tag costs
+  // nothing and the day someone points a browser at it from elsewhere is the day it matters.
   robots: { index: false, follow: false, nocache: true },
 };
 
@@ -36,8 +32,8 @@ const PRELOAD_FONTS = [
 ];
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  // Null on the sign-in page, which is the only place that renders without a user.
-  const user = await getCurrentUser();
+  // The unlock screen is the only page that renders without the app being open.
+  const open = (await getUnlockState()) === "unlocked";
 
   /*
    * `suppressHydrationWarning` on <html> covers exactly one thing: THEME_SCRIPT writes
@@ -77,7 +73,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <div className="sub">Learner Permanent Records · SF10</div>
             </div>
             <nav>
-              {user && (
+              {open && (
                 <>
                   <Link className="btn" data-variant="ghost" href="/">
                     Search
@@ -88,34 +84,26 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                   <Link className="btn" data-variant="ghost" href="/students/new">
                     New record
                   </Link>
-                  {user.role === "admin" && (
-                    <Link className="btn" data-variant="ghost" href="/admin/users">
-                      Accounts
-                    </Link>
-                  )}
-                  <ConnectionState />
-                  <span className="who" title={`Signed in as ${user.username}`}>
-                    {user.full_name}
-                    <span className="who-role">{user.role}</span>
-                  </span>
+                  <Link className="btn" data-variant="ghost" href="/settings">
+                    Settings
+                  </Link>
                 </>
               )}
               {/*
-               * Outside the signed-in block on purpose. Sign-in is the only screen that renders
+               * Outside the unlocked block on purpose. Unlock is the only screen that renders
                * without navigation, and it is also the first one anyone sees — someone who works
-               * in the dark should not have to log in first to turn the lights down.
+               * in the dark should not have to open the records first to turn the lights down.
                */}
               <ThemeToggle />
-              {user && (
-                <form action={signOut}>
-                  <SignOutButton />
+              {open && (
+                <form action={lockApp}>
+                  <LockButton />
                 </form>
               )}
             </nav>
           </div>
         </header>
         {children}
-        {user && <ServiceWorkerRegistrar />}
       </body>
     </html>
   );

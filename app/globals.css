@@ -371,27 +371,6 @@ a:hover {
   display: inline-flex;
 }
 
-/* Who is signed in. */
-.who {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  line-height: 1.2;
-  margin-left: 6px;
-  padding-left: 15px;
-  border-left: 1px solid var(--rule);
-  font-size: 12.5px;
-  color: var(--ink-2);
-  white-space: nowrap;
-}
-
-.who-role {
-  font-size: 9.5px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-}
-
 /* --- The light/dark switch ---------------------------------------------- */
 
 /*
@@ -549,17 +528,6 @@ a:hover {
     width: 100%;
     margin-left: 0;
     flex-wrap: wrap;
-  }
-
-  .who {
-    margin-left: auto;
-    padding-left: 0;
-    border-left: none;
-    font-size: 0; /* The full name goes; the role tag below keeps its own size. */
-  }
-
-  .who-role {
-    font-size: 9.5px;
   }
 
   .page {
@@ -1066,7 +1034,6 @@ a:hover {
 }
 
 .form-field label,
-.account-form label,
 .danger-zone label {
   display: block;
   font-size: 9.5px;
@@ -1169,15 +1136,6 @@ a:hover {
 .grade-cell[data-state="error"] .grade-input,
 .grade-cell[data-state="conflict"] .grade-input {
   border-color: var(--alert);
-}
-
-/* Offline, phase A: editing is visibly unavailable rather than silently broken. */
-.grade-cell[data-locked="true"] .grade-input {
-  background: var(--recess);
-  border-style: dashed;
-  border-color: var(--advisory);
-  color: var(--ink-2);
-  cursor: not-allowed;
 }
 
 /* ==========================================================================
@@ -1667,116 +1625,26 @@ mark {
 }
 
 /* ==========================================================================
-   17. Connection state (offline, phase A)
+   17. Unlock and settings
    ========================================================================== */
 
-/*
- * Permanent chrome, never a toast. If the app is serving a cached copy the user finds that
- * out by looking, not by discovering it when a save disappears.
- */
-.conn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  padding: 5px 11px;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-pill);
-  background: var(--recess);
-  color: var(--ink-3);
-  white-space: nowrap;
-}
-
-.conn::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  flex: none;
-}
-
-.conn[data-state="live"] {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
-  background: var(--accent-tint);
-}
-
-.conn[data-state="cached"] {
-  color: var(--advisory);
-  border-color: color-mix(in srgb, var(--advisory) 28%, transparent);
-  background: var(--advisory-tint);
-}
-
-.conn[data-state="syncing"] {
-  color: var(--advisory);
-  border-color: color-mix(in srgb, var(--advisory) 28%, transparent);
-  background: var(--advisory-tint);
-}
-
-.conn[data-state="syncing"]::before {
-  animation: pulse 1.1s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  50% {
-    opacity: 0.25;
-  }
-}
-
-/* "Cached copy · as of 10:42, 12 Aug" — a real timestamp, never just the word offline. */
-.freshness {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  letter-spacing: 0.04em;
-  color: var(--advisory);
-  border: 1px solid color-mix(in srgb, var(--advisory) 26%, transparent);
-  border-left-width: 3px;
-  border-left-color: var(--advisory);
-  background: var(--advisory-tint);
-  padding: 9px 13px;
-  border-radius: var(--radius);
-  margin-bottom: 20px;
-}
-
-/* A learner in the index whose full record was never cached. */
-.result[data-cached="false"] {
-  opacity: 0.55;
-}
-
-.result[data-cached="false"]:hover {
-  background: transparent;
-  box-shadow: inset 3px 0 0 0 var(--advisory);
-}
-
-/* ==========================================================================
-   18. Sign-in and accounts
-   ========================================================================== */
-
-/* The sign-in page carries no navigation, so it is centred rather than left-aligned. */
-.login-page {
+/* The unlock page carries no navigation, so it is centred rather than left-aligned. */
+.unlock-page {
   max-width: 470px;
 }
 
-.login-card {
+.unlock-card {
   margin-top: 9vh;
   overflow: hidden;
 }
 
-.login-form {
+.unlock-form {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.login-form label {
+.unlock-form label {
   font-size: 9.5px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -1785,12 +1653,12 @@ mark {
   margin-top: 13px;
 }
 
-.login-form button {
+.unlock-form button {
   margin-top: 22px;
   justify-content: center;
 }
 
-.login-error {
+.unlock-error {
   border: 1px solid color-mix(in srgb, var(--alert) 32%, transparent);
   border-left-width: 3px;
   border-left-color: var(--alert);
@@ -1802,11 +1670,38 @@ mark {
   margin: 16px 0 0;
 }
 
-.account-form {
+.settings-form {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  max-width: 720px;
+  gap: 6px;
+  max-width: 460px;
+}
+
+.settings-form label {
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-weight: 700;
+  margin-top: 13px;
+}
+
+.settings-form button {
+  margin-top: 22px;
+  align-self: flex-start;
+}
+
+/* Affirmation, so it uses --accent rather than --advisory. See the palette note in §1. */
+.settings-done {
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-left-width: 3px;
+  border-left-color: var(--accent);
+  background: var(--accent-tint);
+  color: var(--accent);
+  padding: 11px 14px;
+  font-size: 13px;
+  border-radius: var(--radius);
+  margin: 16px 0 0;
 }
 
 .field-row {
@@ -1819,21 +1714,8 @@ mark {
   flex: 1 1 180px;
 }
 
-.account-actions {
-  display: flex;
-  gap: 9px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.account-actions .login-error,
-.account-actions .notice {
-  margin: 0;
-  flex-basis: 100%;
-}
-
 /* ==========================================================================
-   19. Footer
+   18. Footer
    ========================================================================== */
 
 .foot {
@@ -1850,7 +1732,7 @@ mark {
 }
 
 /* ==========================================================================
-   20. Motion
+   19. Motion
    ========================================================================== */
 
 /*

@@ -10,33 +10,23 @@ import type { ImportSummary, FileResult } from "@/lib/import/import-sf10.ts";
  *
  * ## How a file gets in
  *
- *     browser --(1) ticket--> server        one presigned PUT, one server-chosen key, 5 minutes
- *     browser --(2) PUT-----> object store  the bytes never pass through a function
- *     browser --(3) keys----> server        small batches; the server reads, parses, writes
+ *     browser --> POST /api/import/upload --> server reads, parses, writes
  *
- * Step 2 exists because a Vercel function caps request bodies at 4.5 MB — about twenty SF10s —
- * and the school's archive is over a thousand files. Step 3 is batched so no single request
- * runs near the function time limit.
+ * One hop. This used to be three: the browser asked for a presigned upload ticket, PUT the
+ * bytes straight into an object store, then told the server which keys to import. That dance
+ * existed because a Vercel function caps request bodies at 4.5 MB — about twenty SF10s — and
+ * the school's archive is over a thousand files. The server is now on this machine and the
+ * file is already on its disk, so the cap, the bucket and the ticket all went together.
  *
- * Where no object store is configured (local development), steps 1 and 2 are skipped and the
- * files are posted to the server directly. Same endpoint, same result shape.
+ * Still batched. Not for a time limit any more, but because it is what lets the progress
+ * counter move during a thousand-file import instead of sitting still for several minutes.
  *
  * Importing is always safe to repeat: a file counts as already imported only while the learner
  * it produced still exists.
  */
 
-/** Small enough that a batch is never near the function time limit. */
+/** Small enough that the progress counter moves, large enough not to be chatty. */
 const BATCH_SIZE = 5;
-
-interface Uploaded {
-  key: string;
-  filename: string;
-}
-
-const extensionOf = (name: string) => {
-  const i = name.lastIndexOf(".");
-  return i === -1 ? "" : name.slice(i).toLowerCase();
-};
 
 export function ImportPanel() {
   const router = useRouter();
@@ -62,75 +52,21 @@ export function ImportPanel() {
     setBusy(true);
 
     const results: FileResult[] = [];
-    const failEarly = (file: File, message: string) =>
-      results.push({ filename: file.name, status: "failed", issues: [], error: message });
 
     try {
-      // ---- 1 & 2: bytes straight to the object store, where there is one -------------
-      const uploaded: Uploaded[] = [];
-      let directPost: File[] = [];
-
-      for (const [i, file] of chosen.entries()) {
-        setProgress({ done: i, total: chosen.length, stage: "Uploading" });
-
-        const ext = extensionOf(file.name);
-        const ticketRes = await fetch("/api/import/ticket", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ext }),
-        });
-
-        // 409 means no object store is configured - post the file to the server instead.
-        if (ticketRes.status === 409) {
-          directPost = chosen;
-          break;
-        }
-        if (!ticketRes.ok) {
-          const body = await ticketRes.json().catch(() => ({}));
-          failEarly(file, body.error ?? `Could not start the upload (${ticketRes.status}).`);
-          continue;
-        }
-
-        const ticket = (await ticketRes.json()) as { key: string; url: string; contentType: string };
-        const put = await fetch(ticket.url, {
-          method: "PUT",
-          headers: { "Content-Type": ticket.contentType },
-          body: file,
-        });
-        if (!put.ok) {
-          failEarly(file, `Upload failed (${put.status}).`);
-          continue;
-        }
-        uploaded.push({ key: ticket.key, filename: file.name });
-      }
-
-      // ---- 3: import in batches, accumulating one summary ---------------------------
-      const send = async (payload: BodyInit, headers?: HeadersInit) => {
-        const res = await fetch("/api/import/upload", { method: "POST", body: payload, headers });
+      const send = async (payload: BodyInit) => {
+        const res = await fetch("/api/import/upload", { method: "POST", body: payload });
         const json = await res.json();
         if (!res.ok) throw new Error(json.error ?? `Import failed (${res.status})`);
         return json as ImportSummary;
       };
 
-      if (directPost.length > 0) {
-        // Local development: no bucket, so the server takes the bytes.
-        for (let i = 0; i < directPost.length; i += BATCH_SIZE) {
-          const batch = directPost.slice(i, i + BATCH_SIZE);
-          setProgress({ done: i, total: directPost.length, stage: "Importing" });
-          const body = new FormData();
-          for (const f of batch) body.append("files", f);
-          results.push(...(await send(body)).results);
-        }
-      } else {
-        for (let i = 0; i < uploaded.length; i += BATCH_SIZE) {
-          const batch = uploaded.slice(i, i + BATCH_SIZE);
-          setProgress({ done: i, total: uploaded.length, stage: "Importing" });
-          const batchSummary = await send(
-            JSON.stringify({ files: batch }),
-            { "Content-Type": "application/json" },
-          );
-          results.push(...batchSummary.results);
-        }
+      for (let i = 0; i < chosen.length; i += BATCH_SIZE) {
+        const batch = chosen.slice(i, i + BATCH_SIZE);
+        setProgress({ done: i, total: chosen.length, stage: "Importing" });
+        const body = new FormData();
+        for (const f of batch) body.append("files", f);
+        results.push(...(await send(body)).results);
       }
 
       setSummary({

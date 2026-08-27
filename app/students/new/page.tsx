@@ -1,11 +1,11 @@
 import Link from "next/link";
-import { requireUser } from "@/lib/auth/current-user.ts";
+import { requireUnlocked } from "@/lib/auth/guard.ts";
 import { NewStudentForm } from "@/app/_components/new-student-form.tsx";
 
 export const dynamic = "force-dynamic";
 
 export default async function NewStudentPage() {
-  await requireUser();
+  await requireUnlocked();
 
   return (
     <main className="page">

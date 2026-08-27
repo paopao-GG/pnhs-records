@@ -8,13 +8,11 @@
 
 import { basename } from "node:path";
 import { getOriginalFile, getStudent } from "@/lib/db/queries.ts";
-import { requireUserForApi } from "@/lib/auth/current-user.ts";
+import { requireUnlockedForApi } from "@/lib/auth/guard.ts";
 import { getOriginal, isBlobKey } from "@/lib/blob/store.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// Colocated with the database; see the sf10 route for why.
-export const preferredRegion = "sin1";
 
 const MIME: Record<string, string> = {
   ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -24,7 +22,7 @@ const MIME: Record<string, string> = {
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   // This hands over a learner's source document - the single most sensitive response the app
   // produces, containing parents' names and home addresses on a Form 137.
-  const auth = await requireUserForApi();
+  const auth = await requireUnlockedForApi();
   if (auth.response) return auth.response;
 
   const { id } = await params;

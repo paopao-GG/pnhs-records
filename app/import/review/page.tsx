@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getOpenIssues, type IssueRow } from "@/lib/db/queries.ts";
-import { requireUser } from "@/lib/auth/current-user.ts";
+import { requireUnlocked } from "@/lib/auth/guard.ts";
 import { ResolveButton } from "@/app/_components/resolve-button.tsx";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +18,7 @@ function groupByLearner(issues: IssueRow[]): Map<string, IssueRow[]> {
 }
 
 export default async function ReviewPage() {
-  await requireUser();
+  await requireUnlocked();
 
   const issues = await getOpenIssues();
   const groups = groupByLearner(issues);
