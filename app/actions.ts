@@ -12,15 +12,20 @@ import {
   getOriginalFile,
   getSchoolSettings,
   getStudent,
+  getTerm,
   getTermForSubject,
+  listDocuments,
   resolveIssue,
   swapSubjectOrder,
   updateStudent,
   updateSubjectField,
+  updateStudentStatus,
+  updateTermPeriods,
   updateStudentWithHistory,
   updateSubjectGradesMany,
   updateTerm,
 } from "@/lib/db/queries.ts";
+import { isStudentStatus, type StudentStatus } from "@/lib/status.ts";
 import {
   exactFinalRating,
   finalRating,
@@ -175,12 +180,16 @@ export async function deleteRecord(studentId: number, confirmLrn: string): Promi
     throw new Error("The LRN you typed does not match this learner's LRN.");
   }
 
-  // Read before deleting: `deleteStudent` clears stored_path, so afterwards there is nothing
-  // left to say which object belonged to this learner.
+  // Read before deleting: `deleteStudent` clears stored_path and removes the document rows,
+  // so afterwards there is nothing left to say which objects belonged to this learner.
   const original = await getOriginalFile(studentId);
+  const documents = await listDocuments(studentId);
 
   await deleteStudent(studentId);
   if (original) await deleteOriginal(original.stored_path);
+  // The report cards filed against the learner go with them. Failing to remove these would
+  // leave a child's documents on disk after their record was deleted.
+  for (const doc of documents) await deleteOriginal(doc.stored_path);
 
   revalidatePath("/");
   redirect("/?deleted=1");
@@ -303,6 +312,76 @@ export async function markIssueResolved(issueId: number): Promise<void> {
   await resolveIssue(issueId);
   revalidatePath("/import/review");
   revalidatePath("/import");
+}
+
+/**
+ * Change how many quarters a term is graded over.
+ *
+ * The school is moving from four periods to three, and every record imported before the change
+ * carries four. Without this there is no way to move one across: the count could be chosen when
+ * a record was created and never afterwards, so an imported Grade 9 was stuck on the old scheme
+ * for good - and the three-column report card could never be printed for it.
+ *
+ * **No grades are deleted.** See `updateTermPeriods()`; the fourth-quarter marks stay put and
+ * come back if the term is switched back.
+ */
+export async function setTermPeriods(termId: number, periods: number): Promise<void> {
+  await requireUnlocked();
+
+  // A server action is a public endpoint, so the argument is checked rather than trusted.
+  if (periods !== 3 && periods !== 4) {
+    throw new Error("A term is graded over three or four quarters.");
+  }
+
+  const term = await getTerm(termId);
+  if (!term) throw new Error("That term is no longer on this record.");
+
+  /*
+   * Junior High only. An SHS semester has two quarters and always did - what changed there is
+   * the number of semester blocks in the programme, which lives on the learner as
+   * `shs_semesters`. Setting this on an SHS term would write a value `gradingPeriods()` ignores,
+   * which is worse than refusing: the screen would claim a change that did nothing.
+   */
+  if (term.level > 10) {
+    throw new Error(
+      "Only a Junior High term is graded in quarters. Senior High counts semesters, which are " +
+        "set on the learner.",
+    );
+  }
+
+  await updateTermPeriods(termId, periods, term.grading_periods, NO_USER);
+
+  revalidatePath(`/students/${term.student_id}`);
+  revalidatePath(`/students/${term.student_id}/edit`);
+  revalidatePath("/");
+}
+
+/**
+ * Confirm what a learner is: enrolled, graduated, gone.
+ *
+ * Accepts null, which clears the status back to unconfirmed - a registrar who set the wrong
+ * value needs a way back that is not "pick a different wrong value".
+ *
+ * The status gates diploma printing, so the value is validated here rather than trusted: this
+ * is a public endpoint, and the CHECK constraint behind it produces a database error rather
+ * than something a person could act on.
+ */
+export async function setStudentStatus(
+  studentId: number,
+  status: StudentStatus | null,
+): Promise<void> {
+  await requireUnlocked();
+
+  if (status !== null && !isStudentStatus(status)) {
+    throw new Error(`Not a status this system recognises: ${String(status)}`);
+  }
+
+  const student = await getStudent(studentId);
+  if (!student) throw new Error("That learner is not in the database.");
+
+  await updateStudentStatus(studentId, status, student.status, NO_USER);
+  revalidatePath(`/students/${studentId}`);
+  revalidatePath("/");
 }
 
 export interface NewStudentInput {

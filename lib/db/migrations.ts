@@ -148,6 +148,36 @@ export const MIGRATIONS: Migration[] = [
       await db.execute(`DROP TABLE IF EXISTS login_attempts`);
     },
   },
+  {
+    version: 5,
+    name: "student status",
+    up: async (db) => {
+      /*
+       * What a learner is: enrolled, graduated, gone. See lib/status.ts for why this is stored
+       * rather than derived - briefly, a Grade 10 graduate and a Grade 10 leaver produce
+       * identical rows, and a diploma is printed against this value.
+       *
+       * NULLABLE WITH NO BACKFILL, for a different reason than migration 3's columns.
+       *
+       * There, null carried a meaning: the historical four-quarter default. Here it means
+       * *nobody has confirmed this learner yet*, and that is the only honest starting value.
+       * The suggestion function could have filled every existing row on the way past, and
+       * doing so would have converted a guess into a stored fact for a thousand learners at
+       * once, with nothing to say afterwards which values a person had actually looked at.
+       *
+       * The CHECK is worth having even though the app only ever writes through a typed helper:
+       * it is the last thing standing between a typo in a future migration and a status nothing
+       * in the UI can display.
+       */
+      await addColumnIfMissing(
+        db,
+        "students",
+        "status",
+        `TEXT CHECK (status IN ('enrolled', 'jhs_graduate', 'shs_graduate',
+                                'transferred_out', 'left_school', 'old_curriculum'))`,
+      );
+    },
+  },
 ];
 
 /**

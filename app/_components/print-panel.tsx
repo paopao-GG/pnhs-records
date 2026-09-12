@@ -13,10 +13,19 @@ export function PrintPanel({
   studentId,
   forms,
   levelsByForm,
+  sf9Levels,
 }: {
   studentId: number;
   forms: ("jhs" | "shs")[];
   levelsByForm: Record<string, number[]>;
+  /**
+   * Grade levels that can be printed as a report card.
+   *
+   * Only terms graded over three periods qualify - the form has three TERM columns and no
+   * defined layout for a fourth, so a four-quarter term would print with a quarter silently
+   * missing. Empty means no button.
+   */
+  sf9Levels: number[];
 }) {
   const [open, setOpen] = useState<"jhs" | "shs" | null>(null);
   const [selected, setSelected] = useState<Record<string, number[]>>(levelsByForm);
@@ -42,6 +51,16 @@ export function PrintPanel({
 
   return (
     <div className="btn-row">
+      {sf9Levels.map((level) => (
+        <a
+          key={`sf9-${level}`}
+          className="btn"
+          href={`/api/students/${studentId}/sf9?level=${level}`}
+          title="The report card sent home, printed twice on one sheet"
+        >
+          Report card{sf9Levels.length > 1 ? ` · Grade ${level}` : ""}
+        </a>
+      ))}
       {forms.map((form) => {
         const levels = levelsByForm[form] ?? [];
         const chosen = selected[form] ?? [];

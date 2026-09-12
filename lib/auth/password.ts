@@ -81,53 +81,36 @@ export async function verifyPassword(password: string, stored: string): Promise<
 }
 
 /**
- * Reject passwords that would make the accounts pointless.
+ * Reject passwords that would make the lock pointless.
  *
- * Length over character classes: a 12-character passphrase beats `P@ssw0rd!` and people can
- * actually remember it. The banned list exists because, left alone, a school system's password
- * becomes the school's name.
- */
-const BANNED = [
-  "password",
-  "pantao",
-  "pnhs",
-  "301860",
-  "national high school",
-  "12345678",
-  "qwerty",
-];
-
-/**
- * Role names, refused only as whole words.
+ * Eight characters, with a letter, a capital and a number among them. The reasoning behind
+ * that shape - and what it gave up - is in [policy.ts](./policy.ts), next to the number
+ * itself.
  *
- * These were in the list above, matched as substrings, which refused any passphrase containing
- * them inside a longer word - "the administrator sang badly" is a perfectly good password and
- * was rejected. A rule that turns down good passwords teaches people to pick worse ones.
+ * **There is no banned-word list.** There was: `pnhs`, `pantao`, the school ID, and the role
+ * names. The school asked for its own vocabulary back, so `Pnhs2026` is now a valid password.
+ *
+ * Each rule returns its own message. One generic "invalid password" would leave the registrar
+ * guessing which of four things was wrong, on the one screen where being stuck has no way out
+ * - nobody can reset this for them.
  */
-const BANNED_WORDS = /\b(admin|adviser|registrar|teacher)\b/;
-
-export function passwordProblem(password: string, username?: string): string | null {
+export function passwordProblem(password: string): string | null {
   if (password.length < MIN_PASSWORD_LENGTH) {
-    return `Use at least ${MIN_PASSWORD_LENGTH} characters. A short phrase you can remember is fine.`;
+    return `Use at least ${MIN_PASSWORD_LENGTH} characters.`;
   }
   if (password.length > 200) {
     return "That password is unreasonably long.";
   }
-
-  const lower = password.toLowerCase();
-  if (username && lower.includes(username.toLowerCase())) {
-    return "The password must not contain the username.";
+  if (!/[a-zA-Z]/.test(password)) {
+    return "Include at least one letter.";
   }
-  for (const bad of BANNED) {
-    if (lower.includes(bad)) {
-      return `The password must not contain "${bad}".`;
-    }
+  if (!/[A-Z]/.test(password)) {
+    return "Include at least one capital letter.";
   }
-  const word = BANNED_WORDS.exec(lower);
-  if (word) {
-    return `The password must not contain the word "${word[1]}".`;
+  if (!/[0-9]/.test(password)) {
+    return "Include at least one number.";
   }
-  // A single repeated character clears the length rule but nothing else.
+  // A single repeated character clears every rule above it: `Aaaa1111` has all three classes.
   if (new Set(password).size < 5) {
     return "The password needs more variety than that.";
   }

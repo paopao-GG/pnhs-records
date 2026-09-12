@@ -41,6 +41,12 @@ CREATE TABLE IF NOT EXISTS students (
   -- four. Per learner rather than per term because it describes the programme - a three-semester
   -- learner has no Grade 12 2nd Semester row for it to live on.
   shs_semesters        INTEGER,
+  -- Enrolled, graduated, or gone. NULL means nobody has confirmed it yet, which is the
+  -- starting state for every learner: this cannot be derived, because a Grade 10 graduate and
+  -- a Grade 10 leaver leave identical rows behind. See lib/status.ts, and migration 5 for why
+  -- nothing was backfilled.
+  status               TEXT CHECK (status IN ('enrolled', 'jhs_graduate', 'shs_graduate',
+                                              'transferred_out', 'left_school', 'old_curriculum')),
   created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
   updated_at   TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -188,6 +194,40 @@ CREATE TABLE IF NOT EXISTS import_files (
   stored_path  TEXT,
   imported_at  TEXT    NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Report cards this app generated, filed against the learner they were made for.
+--
+-- Deliberately NOT rows in import_files, for three reasons that all bite:
+--
+--  * import_files.form is 'jhs' | 'shs' | 'f137', and those values drive the level-scoped
+--    replacement in writeRecord() - re-importing an SF10-JHS deletes and rewrites that
+--    learner's Grade 7-10 terms. A report card owns no grade levels, so putting it in that
+--    column would add a value to a switch that cannot apply to it.
+--  * import_files is UNIQUE(sha256) globally, because a byte-identical SF10 really is the same
+--    import. Here a learner accumulates a card per year, and a card reprinted after a grade
+--    was corrected is a second issuance worth keeping. Hence no unique constraint on the hash.
+--  * getOriginalFile() is ORDER BY id DESC LIMIT 1 - one source file per learner. That
+--    assumption is fine for the form a record was imported from and wrong for an archive a
+--    learner accumulates over six years.
+--
+-- The bytes live where every other original does, keyed by hash. See lib/blob/store.ts.
+CREATE TABLE IF NOT EXISTS student_documents (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  student_id     INTEGER NOT NULL REFERENCES students (id) ON DELETE CASCADE,
+  -- Only the SF9 now. A database created by an earlier build has a wider CHECK listing the
+  -- diploma and certificate types; it is deliberately left alone, because it still permits
+  -- every value this build writes and narrowing it would mean rebuilding the table. See
+  -- lib/documents.ts for why those types went.
+  document_type  TEXT    NOT NULL CHECK (document_type IN ('sf9')),
+  filename       TEXT    NOT NULL,
+  sha256         TEXT    NOT NULL,
+  stored_path    TEXT    NOT NULL,
+  notes          TEXT,
+  uploaded_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_student_documents_student
+  ON student_documents (student_id, document_type);
 
 -- Anything a human should look at. Nothing is ever dropped on import; it is flagged here.
 CREATE TABLE IF NOT EXISTS import_issues (

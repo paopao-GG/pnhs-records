@@ -20,9 +20,14 @@
  *
  * ## What it checks
  *
- * The bundle may contain exactly two kinds of document: the two blank SF10 templates the
- * exporter fills, and `db/schema.sql`. Anything else that looks like learner data — a `.db`, a
- * `.docx`, an `.xlsx` outside `templates/` — is a file nobody meant to ship.
+ * The bundle may contain exactly the blank forms the exporters fill, plus `db/schema.sql`.
+ * Anything else that looks like learner data — a `.db`, a `.docx`, an `.xlsx` — is a file
+ * nobody meant to ship.
+ *
+ * **The allowlist is filenames, not `templates/**`.** A directory rule would let a filled form
+ * dropped in there ship unnoticed, and the SF9 template is itself a `.docx` — exactly the
+ * extension this check exists to catch. Adding a template means editing the line below, which
+ * is the friction that keeps the check meaning something.
  *
  * Run: npm run check:bundle   (and automatically as part of npm run build:desktop)
  */
@@ -32,8 +37,15 @@ import { join, relative } from "node:path";
 
 const BUNDLE = join(process.cwd(), ".next", "standalone");
 
-/** The only documents that belong in a build. Both are blank forms, not records. */
-const ALLOWED = new Set(["templates/SF10-JHS.xlsx", "templates/SF10-SHS.xlsx", "db/schema.sql"]);
+/** The only documents that belong in a build. Every one is a blank form, not a record. */
+const ALLOWED = new Set([
+  "templates/SF10-JHS.xlsx",
+  "templates/SF10-SHS.xlsx",
+  // The school's own blank Form 138. Verified empty: every grade cell is a run-less paragraph
+  // and the identity fields are underscore runs. See lib/sf10/sf9-map.ts.
+  "templates/SF9-JHS.docx",
+  "db/schema.sql",
+]);
 
 /** Extensions that mean "this is somebody's record", wherever they turn up. */
 const SUSPECT = /\.(db|db-wal|db-shm|sqlite|sqlite3|docx|xlsx|xls|doc)$/i;

@@ -28,8 +28,8 @@ export default async function UnlockPage() {
             <>
               <p className="muted" style={{ marginTop: 0 }}>
                 This machine has no password yet. Choose one now — it will be asked for every
-                time the app is opened. At least {MIN_PASSWORD_LENGTH} characters; a short
-                phrase you can remember is fine.
+                time the app is opened. At least {MIN_PASSWORD_LENGTH} characters, including a
+                capital letter and a number.
               </p>
               <p className="muted">
                 There is no way to recover it. Nobody can reset it for you.

@@ -179,6 +179,106 @@ form would assert a curriculum the learner never studied. They are searchable an
 and the original document is offered for download instead — which is why every imported file
 is kept.
 
+## Learner status
+
+Every learner carries a status — **Enrolled**, **JHS Graduate**, **SHS Graduate**,
+**Transferred Out**, **Left School** or **Old Curriculum** — set on their record page. It shows
+as a chip on the search list, so "who graduated last year" is answerable at a glance.
+
+It starts blank, and the app will not fill it in for you. Where the record makes the answer
+obvious it offers a suggestion with an **Accept** button beside it; you can also just pick one.
+
+**Why it asks instead of working it out.** A learner who graduated Grade 10 and a learner who
+left after Grade 10 look exactly the same in the records — same terms, same passing marks, and
+nothing after. The app cannot tell those apart, and neither can it tell either from a learner
+whose next year simply has not been encoded yet. It says so rather than guessing, because this
+is the value the app will organise the whole learner list by.
+
+For the same reason **Transferred Out** and **Left School** are never suggested. Nothing in the
+records says *why* someone stopped appearing, so only you know that.
+
+## Finding a group of learners
+
+The search box answers *where is this learner's record*. The filters above it answer the other
+question — **who is in Grade 9 Sampaguita**, **who graduated last year**, **who is still
+enrolled**.
+
+Three filters and a grouping, all optional:
+
+| | |
+|---|---|
+| **Status** | Enrolled, graduated, left — plus **Not confirmed**, which is how you find the learners still waiting on a decision |
+| **Grade** | The learner's **current** grade: the furthest year they have a term for. A Grade 9 learner does not appear under Grade 7, even though they sat it |
+| **Section** | The section of that same furthest year |
+| **Group by** | Breaks the list into headed sections — by status, grade or section — with a count on each |
+
+Filters and the search box work together: filter to a section, then type a surname to find
+someone within it. **Clear** puts everything back.
+
+Only what the records actually contain is offered. A school with no Senior High never sees
+Grades 11–12, and a section nobody is in any more stops being listed.
+
+## Three terms or four quarters
+
+Each Junior High year on a record carries its own **Periods** setting — *4 quarters* or
+*3 terms* — in the year's heading on the **Edit record** screen.
+
+It is per year, not per learner, because a learner straddles the change: Grade 7 and 8 under
+four quarters and Grade 9 under three, on one permanent record. Records imported from the
+school's older SF10 files all arrive as four-quarter, so this is how one is moved across.
+
+**Switching to 3 does not delete anything.** The fourth quarter's marks stay exactly where they
+are; they stop counting toward the final rating and stop printing on the SF10, and they come
+back unchanged if you switch the year back to 4. The note beside the setting says so when there
+are marks in that column.
+
+What it does change is what counts: finals and the general average then average three columns
+instead of four. It is also what makes the report card available — see below.
+
+## Printing a report card (SF9)
+
+On a learner's record, beside the SF10 buttons, is **Report card**. It fills the school's own
+Form 138 and hands back a Word document — the full landscape sheet with **both copies on it**,
+ready to print and cut apart.
+
+It appears only for a Junior High year graded over **three terms**. The form has three TERM
+columns and no layout for a fourth, so a year still graded over four quarters gets no button
+rather than a card with a quarter quietly missing. If a year you expect to print shows no
+button, check its **Periods** setting — an imported record arrives as four-quarter.
+
+What it fills, and what it leaves alone:
+
+- Name, age, sex, LRN, grade, section and school year, on both halves.
+- Every subject's three terms, its final grade and Passed/Failed, plus the general average.
+- **Attendance is left blank** for the adviser to write in. The system holds no attendance for
+  K-12 years, and printing zeros would say the learner attended nothing.
+- Subject names, the month headings and the class-day counts are the school's own pre-printed
+  text and are never touched.
+
+Two things worth knowing:
+
+- **"Values Education" on the card is the subject the SF10 calls "Edukasyon sa Pagpapakatao
+  (EsP)".** The card uses the school's wording; nothing is renamed in the records.
+- **"Music and Arts" and "Physical Education and Health" are worked out by averaging** the four
+  components stored against the learner. The form asks for two figures where the permanent
+  record keeps four. This is the one number on the card the system calculates rather than
+  reports — **check it against a real filled card before relying on it.**
+
+### Every card is kept
+
+Printing a card also files it against the learner. It appears under **Documents** on their
+record, and can be downloaded again exactly as it was issued.
+
+That matters because grades change. Once a mark is corrected the record no longer says what the
+card sent home in April actually said — unless a copy of that card was kept, which is what this
+does. The filed copy is the exact file that was downloaded, not a fresh one built from today's
+grades.
+
+Printing the same card twice does not file it twice; a spare copy for a parent who lost theirs
+is not a second issuance. Printing again **after a grade changed** does file a second entry,
+because that genuinely is a different document. Remove one with the **×** beside it if it was
+generated by mistake.
+
 ## How printing works
 
 This is the part worth understanding, because it is what makes the output acceptable to
@@ -242,8 +342,8 @@ that produced a working installer and no error message:
 | `npm run db:migrate` | Apply the schema and any pending migrations, and report what changed |
 | `npm run import:dry` | Parse a folder and report what would import, writing nothing |
 | `npm run roundtrip` | Prove file → database → printed form loses nothing |
-| `npm test` | Eight unit suites — grade arithmetic, migrations, Form 137, the password, storage, the backup |
-| `npm run test:browser` | Real Chrome: the grid's keyboard model, the unlock screen, the theme |
+| `npm test` | Twelve unit suites — grade arithmetic, migrations, Form 137, the password, storage, the backup, learner status, filed cards, the Word writer, the report card |
+| `npm run test:browser` | Real Chrome: the grid's keyboard model, the unlock screen, the theme, status, printing and filing a card, the list filters |
 | `npm run verify` | Prove the template survives filling byte-for-byte |
 | `npm run spike` | Validate all 786 mapped cells, write sample forms |
 | `npm run check` | Generate SF10 files straight from the database |

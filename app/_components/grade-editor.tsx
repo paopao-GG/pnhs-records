@@ -3,10 +3,12 @@
 import { useCallback, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { moveSubject, removeSubject, saveLearnerInfo } from "../actions.ts";
+import { TermPeriods } from "./term-periods.tsx";
 import {
   exactFinalRating,
   finalRating,
   generalAverage,
+  gradingPeriods,
   isPassing,
   promotionRemark,
   quarterFieldsFor,
@@ -121,6 +123,17 @@ export function GradeEditor({
               </h3>
               {b.term.section && <span className="chip">{b.term.section}</span>}
               <div className="spacer" />
+              {/* Junior High only: an SHS semester has two quarters and always did. What
+                  changed there is the number of semester blocks, which lives on the learner. */}
+              {isJhs && (
+                <TermPeriods
+                  termId={b.term.id}
+                  periods={gradingPeriods(b.term)}
+                  quartersWithMarks={
+                    b.subjects.some((s) => s.q4 != null) ? 4 : gradingPeriods(b.term)
+                  }
+                />
+              )}
               <span
                 className="stamp"
                 data-tone={passing === null ? "none" : passing ? "pass" : "fail"}

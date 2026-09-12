@@ -7,6 +7,7 @@ import {
   getDeletionSummary,
   getOriginalFile,
   getStudent,
+  listDocuments,
   getSubjectsForStudent,
   getTerms,
   hasOldCurriculum,
@@ -17,6 +18,10 @@ import {
 import { requireUnlocked } from "@/lib/auth/guard.ts";
 import { DeleteRecord } from "@/app/_components/delete-record.tsx";
 import { PrintPanel } from "@/app/_components/print-panel.tsx";
+import { StatusPicker } from "@/app/_components/status-picker.tsx";
+import { DocumentList } from "@/app/_components/document-list.tsx";
+import { isStudentStatus, suggestStudentStatus } from "@/lib/status.ts";
+import { sf9Terms } from "@/lib/db/to-sf9-record.ts";
 import { Guilloche } from "@/app/_components/guilloche.tsx";
 import { Seal, type SealTone } from "@/app/_components/seal.tsx";
 import {
@@ -306,15 +311,23 @@ export default async function StudentPage({ params }: { params: Promise<{ id: st
 
   // Everything this page needs, fetched together. The per-term lookups this replaces were a
   // network round trip each once the database stopped being a local file.
-  const [terms, subjectsByTerm, attendanceByTerm, issueCount, original, deletionSummary] =
-    await Promise.all([
-      getTerms(studentId),
-      getSubjectsForStudent(studentId),
-      getAttendanceForStudent(studentId),
-      countIssuesForStudent(studentId),
-      getOriginalFile(studentId),
-      getDeletionSummary(studentId),
-    ]);
+  const [
+    terms,
+    subjectsByTerm,
+    attendanceByTerm,
+    issueCount,
+    original,
+    deletionSummary,
+    documents,
+  ] = await Promise.all([
+    getTerms(studentId),
+    getSubjectsForStudent(studentId),
+    getAttendanceForStudent(studentId),
+    countIssuesForStudent(studentId),
+    getOriginalFile(studentId),
+    getDeletionSummary(studentId),
+    listDocuments(studentId),
+  ]);
 
   const forms = availableForms(terms);
   const isOldRecord = hasOldCurriculum(terms);
@@ -381,6 +394,16 @@ export default async function StudentPage({ params }: { params: Promise<{ id: st
           </div>
           <dl className="fields">
             <div className="field">
+              <dt>Status</dt>
+              <dd>
+                <StatusPicker
+                  studentId={student.id}
+                  status={isStudentStatus(student.status) ? student.status : null}
+                  suggestion={suggestStudentStatus(terms, student)}
+                />
+              </dd>
+            </div>
+            <div className="field">
               <dt>Sex</dt>
               <dd>{student.sex === "M" ? "Male" : student.sex === "F" ? "Female" : ""}</dd>
             </div>
@@ -424,7 +447,12 @@ export default async function StudentPage({ params }: { params: Promise<{ id: st
               Download original
             </a>
           )}
-          <PrintPanel studentId={studentId} forms={forms} levelsByForm={levelsByForm} />
+          <PrintPanel
+            studentId={studentId}
+            forms={forms}
+            levelsByForm={levelsByForm}
+            sf9Levels={sf9Terms(terms).map((t) => t.level)}
+          />
         </div>
       </aside>
 
@@ -469,6 +497,19 @@ export default async function StudentPage({ params }: { params: Promise<{ id: st
             />
           ))
         )}
+
+        <div className="eyebrow" style={{ margin: "26px 0 14px" }}>
+          Documents
+        </div>
+
+        <section className="card">
+          <div className="card-head">
+            <h3>Diplomas, certificates and report cards</h3>
+          </div>
+          <div className="card-body">
+            <DocumentList studentId={studentId} documents={documents} />
+          </div>
+        </section>
 
         <DeleteRecord
           studentId={studentId}

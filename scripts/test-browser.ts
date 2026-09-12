@@ -364,6 +364,186 @@ async function run(): Promise<void> {
     );
   }
 
+  // --- learner status -----------------------------------------------------
+  /*
+   * The fixture learner has Grade 7 and 8 terms and no status, so the page should offer a
+   * suggestion rather than assert one. Accepting it is the only way the value is ever written.
+   */
+  await page.goto(`${BASE}${href}`, { waitUntil: "networkidle" });
+  ok("an unconfirmed learner shows a status picker", await page.isVisible(".status-picker"));
+  ok(
+    "and the status is not pre-filled",
+    (await page.locator(".status-picker select").inputValue()) === "",
+  );
+
+  /*
+   * The fixture's terms carry no promotion remark and no general average, so their outcome
+   * cannot be read - and the app declines to guess rather than proposing "enrolled" because
+   * that is the safe-looking default. That restraint is the whole reason status is stored
+   * rather than derived, so it is worth asserting in the real UI and not only in unit tests.
+   */
+  ok(
+    "no suggestion is offered when the last term's outcome cannot be read",
+    (await page.locator(".status-suggestion").count()) === 0,
+  );
+
+  // Setting one by hand is the path that always exists, suggestion or not.
+  await page.selectOption(".status-picker select", "shs_graduate");
+  await page.waitForFunction(
+    () => document.querySelector<HTMLSelectElement>(".status-picker select")?.value === "shs_graduate",
+  );
+  await page.reload({ waitUntil: "networkidle" });
+  ok(
+    "a status set by hand survives a reload",
+    (await page.locator(".status-picker select").inputValue()) === "shs_graduate",
+  );
+
+  // The chip on the search page is what makes "who graduated" answerable at a glance.
+  await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+  ok(
+    "a confirmed status shows on the search list",
+    (await page.locator('.result .chip[data-status="shs_graduate"]').count()) === 1,
+  );
+
+  // --- changing a term's grading periods -----------------------------------
+  /*
+   * The fixture's Grade 7 is four-quarter, which is what every imported record looks like.
+   * Switching it to three is the only way such a record ever becomes printable, so the grid has
+   * to redraw with one fewer column - and the marks must survive the round trip, because the
+   * whole promise of the control is that nothing is thrown away.
+   */
+  await page.goto(`${BASE}/students/1/edit`, { waitUntil: "networkidle" });
+  await page.waitForSelector('[data-encoding-grid] [data-cell="0,0"]');
+
+  const q4Cell = page.locator('[data-encoding-grid]').first().locator('[data-cell="0,3"]');
+  ok("the four-quarter term shows a fourth column to begin with", (await q4Cell.count()) === 1);
+
+  const periodSelect = page.locator(".term-periods select").first();
+  ok("each Junior High term offers a period count", (await periodSelect.count()) === 1);
+  ok("and starts on what the record says", (await periodSelect.inputValue()) === "4");
+
+  await periodSelect.selectOption("3");
+  await page.waitForSelector('[data-encoding-grid] [data-cell="0,3"]', { state: "detached" });
+  ok("switching to three drops the fourth column from the grid", (await q4Cell.count()) === 0);
+
+  await page.reload({ waitUntil: "networkidle" });
+  ok(
+    "and the change stuck",
+    (await page.locator(".term-periods select").first().inputValue()) === "3",
+  );
+
+  // Back again: the marks were kept, so the fourth column returns still populated.
+  await page.locator(".term-periods select").first().selectOption("4");
+  await page.waitForSelector('[data-encoding-grid] [data-cell="0,3"]');
+  const restored = await page
+    .locator('[data-encoding-grid]')
+    .first()
+    .locator('[data-cell="0,3"]')
+    .inputValue();
+  ok("switching back restores the fourth quarter's marks", restored === "80", `saw "${restored}"`);
+
+  // --- the report card ----------------------------------------------------
+  /*
+   * The fixture has Grade 7 on four quarters and Grade 8 on three, so exactly one of them can
+   * be printed as a report card. That asymmetry is the check: a button per eligible year, and
+   * none for the year the form has no layout for.
+   */
+  await page.goto(`${BASE}${href}`, { waitUntil: "networkidle" });
+  const cardLinks = page.locator('a[href*="/sf9?level="]');
+  ok("a report card is offered for the three-period year", (await cardLinks.count()) === 1);
+  ok(
+    "and not for the four-quarter one",
+    (await cardLinks.first().getAttribute("href"))?.endsWith("level=8"),
+    `href was ${await cardLinks.first().getAttribute("href")}`,
+  );
+
+  const card = await page.evaluate(async (u: string) => {
+    const res = await fetch(u);
+    return { status: res.status, type: res.headers.get("content-type"), size: (await res.blob()).size };
+  }, `${BASE}/api/students/1/sf9?level=8`);
+  ok(
+    "the report card downloads as a Word document",
+    card.status === 200 && (card.type ?? "").includes("wordprocessingml") && card.size > 10_000,
+    `status ${card.status}, type ${card.type}, ${card.size} bytes`,
+  );
+
+  const noCard = await page.evaluate(async (u: string) => (await fetch(u)).status, `${BASE}/api/students/1/sf9?level=7`);
+  ok("and the four-quarter year is refused by the endpoint too, not just hidden", noCard === 409);
+
+  // --- the card is filed as it is printed ---------------------------------
+  /*
+   * Printing is also the act of issuing, so the card lands on the learner's record. Grades move
+   * afterwards; without this, "what was this parent actually given" has no answer.
+   */
+  await page.goto(`${BASE}${href}`, { waitUntil: "networkidle" });
+  const filed = page.locator(".ledger a", { hasText: "SF9_" });
+  ok("the printed card is filed against the learner", (await filed.count()) === 1);
+  ok(
+    "and is labelled as a report card",
+    (await page.locator(".ledger td", { hasText: "Report Card" }).count()) === 1,
+  );
+
+  const filedHref = await filed.getAttribute("href");
+  const back = await page.evaluate(async (u: string) => {
+    const res = await fetch(u);
+    return { status: res.status, size: (await res.blob()).size, type: res.headers.get("content-type") };
+  }, `${BASE}${filedHref}`);
+  ok(
+    "and downloads again as the Word document it was",
+    back.status === 200 && (back.type ?? "").includes("wordprocessingml") && back.size > 10_000,
+    `status ${back.status}, ${back.size} bytes`,
+  );
+
+  // Printing the identical card again is not a second issuance.
+  await page.evaluate((u: string) => fetch(u), `${BASE}/api/students/1/sf9?level=8`);
+  await page.reload({ waitUntil: "networkidle" });
+  ok(
+    "reprinting the same card does not file a second copy",
+    (await page.locator(".ledger a", { hasText: "SF9_" }).count()) === 1,
+  );
+
+  // --- filtering and grouping the list ------------------------------------
+  await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+  ok("the list offers filters", await page.isVisible(".filter-bar"));
+
+  // The fixture learner is Grade 8 at furthest, in Sampaguita, and shs_graduate from earlier.
+  await page.selectOption('.filter-bar select[aria-label="Filter by grade level"]', "8");
+  await page.waitForFunction(() => document.querySelectorAll(".result").length === 1);
+  ok("filtering by grade keeps the learner", (await page.locator(".result").count()) === 1);
+
+  /*
+   * Grade 7 is deliberately not an option even though the learner has a Grade 7 term: the
+   * filter is on their CURRENT grade, the furthest term they have, which is what a registrar
+   * means by "who is in Grade 9". So the non-matching case is tested through status instead.
+   */
+  const gradeOptions = await page
+    .locator('.filter-bar select[aria-label="Filter by grade level"] option')
+    .allTextContents();
+  ok(
+    "the grade filter offers the current grade only, not every year attended",
+    gradeOptions.join(",") === "All,Grade 8",
+    `saw ${gradeOptions.join(",")}`,
+  );
+
+  await page.selectOption('.filter-bar select[aria-label="Filter by status"]', "unconfirmed");
+  await page.waitForFunction(() => document.querySelectorAll(".result").length === 0);
+  ok(
+    "a filter matching nobody empties the list",
+    (await page.locator(".empty").count()) === 1,
+  );
+
+  await page.locator(".filter-bar button", { hasText: "Clear" }).click();
+  await page.waitForFunction(() => document.querySelectorAll(".result").length === 1);
+  ok("Clear puts every learner back", (await page.locator(".result").count()) === 1);
+
+  await page.selectOption('.filter-bar select[aria-label="Group the list"]', "status");
+  await page.waitForSelector(".result-group");
+  ok(
+    "grouping by status heads the list with the status",
+    (await page.locator(".group-head .eyebrow").first().textContent())?.trim() === "SHS Graduate",
+    `saw ${await page.locator(".group-head .eyebrow").first().textContent()}`,
+  );
+
   await context.close();
 
   /*

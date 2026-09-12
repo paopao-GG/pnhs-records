@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(sort -t: -k1,1)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(python3 -)",
+      "Bash(node scripts/test-unlock.ts)",
+      "Bash(tasklist //FI \"IMAGENAME eq electron.exe\")"
     ]
   }
 }

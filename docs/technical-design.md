@@ -115,13 +115,15 @@ JavaScript compiler API that Next.js 15 requires; installing it fails the build 
 
 ## 3. Data model
 
-Eleven tables in [`db/schema.sql`](../db/schema.sql), all `IF NOT EXISTS` / `INSERT OR IGNORE`,
+Twelve tables in [`db/schema.sql`](../db/schema.sql), all `IF NOT EXISTS` / `INSERT OR IGNORE`,
 so applying them is idempotent and self-repairing. **The app applies them itself on first use,
 in every environment**, which is a change — see the gotcha below.
 
 ```
 schema_version    which migrations have run. One row. See the gotcha below.
 students          identity. lrn UNIQUE — the only reliable key.
+                  `status` is enrolled / graduated / gone, and is NULL until a person
+                  confirms it. It cannot be derived — see below.
 jhs_eligibility   1:1 with students. Elementary-completer details.
 shs_eligibility   1:1 with students. JHS-completer details, admission/graduation dates.
 enrollment_terms  one row per grade level (JHS) or per semester (SHS).
@@ -129,6 +131,8 @@ enrollment_terms  one row per grade level (JHS) or per semester (SHS).
 term_subjects     one row per subject per term.
 term_attendance   Form 137 only. One row per month per term; SF10 records no attendance.
 school_settings   the school's own identity, self-seeded.
+student_documents report cards this app generated, filed as they were issued.
+                  Deliberately not import_files — see below.
 import_files      one row per file taken in, keyed by SHA-256.
 import_issues     anything a human should check. Never blocks an import.
 record_history    append-only. Every field change: what moved, from what, to what, when.
@@ -187,6 +191,125 @@ fresh install reports version 0 with everything pending, and an empty file is no
 copying. A failed snapshot **throws**, so nothing is migrated — which currently surfaces as
 every page returning 500, an unhelpful face on a correct decision. Improving that surface is a
 known follow-up.
+
+### Gotcha: the SF9 prints twice, and the two halves are different XML
+
+The report card is a landscape sheet carrying **two copies side by side**, cut apart and sent
+home. They are duplicated *content*, not duplicated bytes. In the first copy the Name blank is
+three runs — `" ____…"(20)` + `"_________"` + `"_"` — and in the second it is one; `LRN: ` is
+its own run in the first and fused with its underscores in the second. None of the six tables is
+byte-identical to its twin.
+
+**So a document-wide find-and-replace fills one copy and silently misses the other**, which is
+the worst available outcome: a card that reads correctly on the half somebody checked.
+
+[`lib/docx/writer.ts`](../lib/docx/writer.ts) therefore addresses paragraphs by
+**`w14:paraId`** — 421 in that template, all unique — and
+[`sf9-map.ts`](../lib/sf10/sf9-map.ts) names both copies' ids for every field. It is the direct
+equivalent of addressing a cell as `r="G7"`. Two consequences worth keeping:
+
+- **The writer inserts; it does not replace.** An empty grade cell is a `<w:p>` with no run at
+  all — nothing between `</w:pPr>` and `</w:p>` — so there is no text node to overwrite. A run
+  is spliced in, cloning `<w:pPr><w:rPr>` so it inherits the cell's formatting. That clone is
+  not cosmetic: grade cells are 10pt unstyled and attendance cells are 8pt Calibri.
+- **`w14:paraId` also appears on `<w:tr>`.** A bare search finds table rows, whose next
+  `</w:p>` belongs to some other cell. `paragraph()` walks back to the owning tag and rejects
+  anything that is not a `<w:p>`.
+
+**The zip round-trip preserves content, not bytes.** `zipSync(unzipSync(x))` re-deflates at
+fflate's default level — the SF9 template measures 54,060 bytes in and 50,878 out. Untouched
+parts are identical *after inflation* (the same `Uint8Array` is passed straight through), but
+their stored form differs, so a fidelity check here must compare inflated parts. This is a real
+difference from what `npm run verify` asserts about the xlsx path, and the two should not be
+described the same way.
+
+### Gotcha: the report card's MAPEH figures are computed, and the rule is assumed
+
+The SF9 prints **Music and Arts** and **Physical Education and Health** as two rows. The SF10
+records those as four separate component subjects, plus a fifth separately-encoded `MAPEH` row
+that cannot produce the split. `combineMapeh()` in
+[`to-sf9-record.ts`](../lib/db/to-sf9-record.ts) averages each pair.
+
+**No DepEd rule and nothing else in this project establishes that averaging.** It is the obvious
+reading of a form that prints two figures where the record holds four, and it is the one number
+on the card the app invents rather than reports. It should be checked against a real filled SF9
+before the school relies on it.
+
+Storing the two figures as ordinary subjects was considered and rejected: it would push a JHS
+term to 15–16 subjects, and `fillJhs` writes subject *i* into template row `firstSubject + i` on
+a form with 13–14 rows. The permanent record would stop printing.
+
+### Gotcha: a learner's status cannot be computed, and must not be guessed
+
+`students.status` looks like something a function over `enrollment_terms` could derive, and it
+is not. **A learner who graduated Grade 10 and a learner who left after Grade 10 leave
+identical rows behind.** The only difference is the absence of a later term, and absence is
+also what a learner whose next year has not been encoded yet looks like.
+
+So the column stores a decision a person made. `suggestStudentStatus()` in
+[`lib/status.ts`](../lib/status.ts) only ever *proposes* one, next to an Accept button, and
+three properties of it are deliberate:
+
+- **It cannot return `transferred_out` or `left_school`.** Nothing records *why* a learner
+  stopped appearing, so those are permanently a human judgement. A future change that makes
+  the function return either is a bug, and `test-status.ts` asserts against it.
+- **It returns null rather than guessing** when the last term carries neither a promotion
+  remark nor a general average. Proposing "enrolled" because it looks like a safe default
+  would be as much an invention as proposing "graduate".
+- **Migration 5 backfills nothing.** Running the suggestion over every existing learner would
+  have turned a guess into a stored fact a thousand times over, with nothing afterwards to say
+  which values a person had actually looked at.
+
+This matters beyond tidiness: the whole learner list is filtered and grouped by this value, so
+a status the app talked itself into is a learner filed permanently under the wrong heading -
+and, unlike a guess shown once, nobody is ever asked about it again.
+
+### Gotcha: a final rating must be averaged over the term's own columns
+
+`exactFinalRating()` in [`lib/grading.ts`](../lib/grading.ts) averages **every quarter it is
+handed** and knows nothing about `grading_periods`. Passing it a whole `SubjectRow` therefore
+averages four columns even on a three-period term.
+
+That was harmless while the period count could only be chosen at creation — a three-period term
+never had a `q4` to begin with. It stopped being harmless the moment a term could be *switched*
+from four to three, because switching deliberately **keeps** the fourth-quarter marks. A card
+for a switched term was averaging a column the form does not print.
+
+`usedQuarters()` in [`to-sf9-record.ts`](../lib/db/to-sf9-record.ts) narrows the row to the
+fields the term actually uses, for the subject finals and for the eight that make the general
+average. `test-sf9` covers it: a term switched to three periods must average 88/90/92 and not
+the 50 sitting in its fourth quarter.
+
+### Gotcha: a generated document must be byte-stable, or the archive fills up
+
+`toBuffer()` in [`lib/docx/writer.ts`](../lib/docx/writer.ts) pins the zip entry `mtime`. Left
+alone, fflate stamps each entry with the current time, so **generating the same card twice a
+second apart produces two different files**.
+
+That is invisible until something compares them. The SF9 route tells a reprint from a genuine
+second issuance by hashing the bytes, and with a clock in the container every reprint looked
+new — a learner's record would fill with copies of one card. `test-docx-writer` asserts the
+same input produces identical output, and the browser suite prints the same card twice and
+expects one row.
+
+### Gotcha: filed documents are not `import_files` rows
+
+[`student_documents`](../db/schema.sql) holds the report cards this app generated. Three
+reasons it is a separate table, each of which bites if they are merged:
+
+- `import_files.form` is `'jhs' | 'shs' | 'f137'`, and those values drive `levelsOwnedBy()` and
+  the **level-scoped replacement** in `writeRecord()` — re-importing an SF10-JHS deletes and
+  rewrites that learner's Grade 7–10 terms. A report card owns no grade levels.
+- `import_files` is `UNIQUE(sha256)` globally, because a byte-identical SF10 really is the same
+  import. Here a learner accumulates a card per year, and one reprinted after a grade was
+  corrected is a second issuance. `findDuplicateDocument()` reports it, and the SF9 route uses that to skip
+  filing a reprint while still filing a card regenerated after a grade changed.
+- `getOriginalFile()` is `ORDER BY id DESC LIMIT 1` — one source file per learner. That is right
+  for the form a record came from and wrong for an archive a learner accumulates over six years.
+
+**Nothing is uploaded into this table.** Every row is a card the app generated, filed by the
+SF9 route as it produced it — which is what makes a learner's Documents a record of what was
+actually issued rather than a folder of files of unknown origin.
 
 ### Gotcha: the schema version is a table, not `PRAGMA user_version`
 
@@ -599,7 +722,7 @@ body limit that shaped the old three-hop upload is gone with the serverless host
 | `npm run roundtrip` | File → DB → printed form loses nothing. **52 of 52 records survive.** The most important test in the repo. |
 | `npm run verify` | The template survives filling byte-for-byte — 23 of 26 internal entries untouched (JHS), 22 of 25 (SHS). |
 
-**Unit checks — `npm test`, no server, fast.** Eight suites:
+**Unit checks — `npm test`, no server, fast.** Twelve suites:
 
 | Suite | What it proves |
 |---|---|
@@ -610,7 +733,11 @@ body limit that shaped the old three-hop upload is gone with the serverless host
 | `test-blob` | Storage keys, the traversal guards in §3, and a round trip |
 | `test-backup` | A backup **opens**, and the learner is in it. Originals come with it. A same-disk destination is refused |
 | `test-subject-order` | The two mechanical traps in reordering — gap-tolerant neighbours, and the three-UPDATE swap |
-| `test-periods` | Three- and four-period terms, and that a filled workbook still writes out |
+| `test-periods` | Three- and four-period terms, and that a filled workbook still writes out. Deliberately touches no database — the checks for *changing* a term's period count live in `test-sf9`, where the harness and fixtures already are |
+| `test-status` | Every branch of the status suggestion, that it **never** proposes transferred-out or left-school, that it declines to guess an unreadable term, and that a status change is written to `record_history` |
+| `test-documents` | Filed cards round-trip byte-identically, a learner can hold several, a re-file is reported not refused, and deleting a card **or the learner** removes the file from disk |
+| `test-docx-writer` | A value split across runs is still replaced, an inserted run inherits the paragraph mark's formatting, a paraId on a `<w:tr>` is not mistaken for a paragraph, an unknown id throws, untouched parts survive, and **the same input produces identical bytes** |
+| `test-sf9` | **Both copies of the card are filled**, MAPEH's four components become the form's two rows, EsP prints on the Values Education line, only three-period terms qualify, the general average counts eight subjects rather than the ten printed rows, and **a printed card is filed against the learner** — once for a reprint, twice when a grade changed between them. Also changing a term's period count: marks survive, finals re-average, and a four-quarter term becomes printable |
 
 **Needs something running:**
 

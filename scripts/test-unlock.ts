@@ -51,7 +51,7 @@ let passed = 0;
 const checks: { name: string; fn: () => Promise<void> }[] = [];
 const check = (name: string, fn: () => Promise<void>) => checks.push({ name, fn });
 
-const PASSWORD = "correct horse battery staple";
+const PASSWORD = "Correct horse battery staple 2026";
 const OTHER = "a different phrase entirely";
 
 /** Wipe the password, every session and the failure count, so each check starts level. */
@@ -102,11 +102,31 @@ check("a malformed stored hash fails closed", async () => {
   }
 });
 
-check("the password policy refuses what would make it pointless", async () => {
-  assert.ok(passwordProblem("short"), "a short password should be refused");
-  assert.ok(passwordProblem("pantao national high school"), "the school's own name");
-  assert.ok(passwordProblem("aaaaaaaaaaaaaaaa"), "one repeated character");
+check("the password policy takes eight characters with a capital and a number", async () => {
+  // Eight is the floor, and the boundary is checked from both sides so an off-by-one shows up.
+  assert.ok(passwordProblem("Pnhs123"), "seven characters should be refused");
+  assert.equal(passwordProblem("Pnhs1234"), null, "exactly eight should be accepted");
+  assert.ok(passwordProblem("A1" + "b".repeat(199)), "an absurd length should be refused");
+
+  // Each class refused on its own, so a failure names which rule broke rather than "invalid".
+  assert.match(passwordProblem("12345678") ?? "", /letter/, "digits alone");
+  assert.match(passwordProblem("pnhs2026") ?? "", /capital/, "no capital");
+  assert.match(passwordProblem("PnhsRecords") ?? "", /number/, "no number");
+
+  // Every class present and still worthless: this is the only rule left that looks at shape.
+  assert.match(passwordProblem("Aaaa1111") ?? "", /variety/, "four distinct characters");
+
   assert.equal(passwordProblem(PASSWORD), null, "a real passphrase should be accepted");
+});
+
+check("the school's own words are allowed", async () => {
+  /*
+   * The point of relaxing the rule. These were all refused outright by the banned list -
+   * `pnhs`, `pantao` and the school ID - which is what staff actually reach for.
+   */
+  for (const allowed of ["Pnhs2026", "Pantao123", "Pnhs301860", "Password2026"]) {
+    assert.equal(passwordProblem(allowed), null, `${allowed} should be accepted now`);
+  }
 });
 
 // ---------------------------------------------------------------- first run

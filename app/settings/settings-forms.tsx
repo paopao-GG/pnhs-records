@@ -40,6 +40,11 @@ export function ChangePasswordForm() {
       />
 
       <label htmlFor="next">New password</label>
+      {/* Stated up front rather than learned by being refused: this form is the only other
+          place the rule applies, and the unlock screen says the same thing. */}
+      <p className="muted" style={{ margin: "0 0 2px", fontSize: 12 }}>
+        At least {MIN_PASSWORD_LENGTH} characters, including a capital letter and a number.
+      </p>
       <input
         id="next"
         name="next"

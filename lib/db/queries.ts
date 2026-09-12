@@ -11,6 +11,8 @@
 import { getDb } from "./index.ts";
 import type { Client, Row, Transaction } from "@libsql/client";
 import type { ShsCategory } from "../sf10/shs-map.ts";
+import type { StudentStatus } from "../status.ts";
+import type { DocumentType } from "../documents.ts";
 
 /** Either the shared connection or an open transaction. Writes take one explicitly. */
 export type Runner = Pick<Client | Transaction, "execute">;
@@ -59,6 +61,13 @@ export interface StudentRow {
   guardian_address: string | null;
   /** Semesters in the SHS programme: 3 under the new scheme. Null means four. */
   shs_semesters: number | null;
+  /**
+   * Enrolled, graduated or gone. Null means nobody has confirmed it yet.
+   *
+   * Read it through `isStudentStatus()` / `statusLabel()` in lib/status.ts - this is a TEXT
+   * column and a database written by an older build has null in every row.
+   */
+  status: string | null;
 }
 
 export interface TermRow {
@@ -115,13 +124,26 @@ export interface StudentSummary {
   middle_name: string | null;
   name_ext: string | null;
   levels: string;
+  /** Null until a person confirms it. See lib/status.ts. */
+  status: string | null;
+  /**
+   * The section of the learner's furthest term - what a registrar means by "who is in
+   * Sampaguita". Null for a learner with no terms, or a term that never recorded one.
+   */
+  section: string | null;
 }
 
 export async function listStudents(): Promise<StudentSummary[]> {
   const db = await getDb();
   const result = await db.execute(
-    `SELECT s.id, s.lrn, s.last_name, s.first_name, s.middle_name, s.name_ext,
-            COALESCE(GROUP_CONCAT(DISTINCT t.level), '') AS levels
+    `SELECT s.id, s.lrn, s.last_name, s.first_name, s.middle_name, s.name_ext, s.status,
+            COALESCE(GROUP_CONCAT(DISTINCT t.level), '') AS levels,
+            -- A correlated subquery rather than a second join: joining again would multiply
+            -- the rows this GROUP BY is collapsing and corrupt the level list.
+            (SELECT section FROM enrollment_terms
+              WHERE student_id = s.id
+              ORDER BY level DESC, COALESCE(semester, 0) DESC
+              LIMIT 1) AS section
        FROM students s
        LEFT JOIN enrollment_terms t ON t.student_id = s.id
       GROUP BY s.id
@@ -234,6 +256,105 @@ export async function getOriginalFile(
     args: [studentId],
   });
   return result.rows[0] ? plain<{ filename: string; stored_path: string }>(result.rows[0]) : null;
+}
+
+// ---------------------------------------------------------------------------
+// Filed documents - diplomas, certificates, report cards. See lib/documents.ts.
+// ---------------------------------------------------------------------------
+
+export interface StudentDocumentRow {
+  id: number;
+  student_id: number;
+  document_type: string;
+  filename: string;
+  sha256: string;
+  stored_path: string;
+  notes: string | null;
+  uploaded_at: string;
+}
+
+/** Everything filed against a learner, newest first within each type. */
+export async function listDocuments(studentId: number): Promise<StudentDocumentRow[]> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT * FROM student_documents
+           WHERE student_id = ?
+           ORDER BY document_type, id DESC`,
+    args: [studentId],
+  });
+  return plainAll<StudentDocumentRow>(result.rows);
+}
+
+/** One document, for the download route. */
+export async function getDocument(id: number): Promise<StudentDocumentRow | null> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT * FROM student_documents WHERE id = ?`,
+    args: [id],
+  });
+  return result.rows[0] ? plain<StudentDocumentRow>(result.rows[0]) : null;
+}
+
+/**
+ * Has this learner already got a byte-identical file under this type?
+ *
+ * Not a constraint, on purpose. Re-issuing the same boilerplate certificate years later is
+ * legitimate, so this only lets the UI ask "you have already filed this - file it again?"
+ * rather than refusing.
+ */
+export async function findDuplicateDocument(
+  studentId: number,
+  documentType: DocumentType,
+  sha256: string,
+): Promise<StudentDocumentRow | null> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT * FROM student_documents
+           WHERE student_id = ? AND document_type = ? AND sha256 = ?
+           ORDER BY id DESC LIMIT 1`,
+    args: [studentId, documentType, sha256],
+  });
+  return result.rows[0] ? plain<StudentDocumentRow>(result.rows[0]) : null;
+}
+
+export async function addDocument(fields: {
+  studentId: number;
+  documentType: DocumentType;
+  filename: string;
+  sha256: string;
+  storedPath: string;
+  notes?: string | null;
+}): Promise<number> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `INSERT INTO student_documents
+            (student_id, document_type, filename, sha256, stored_path, notes)
+          VALUES (?, ?, ?, ?, ?, ?)
+          RETURNING id`,
+    args: [
+      fields.studentId,
+      fields.documentType,
+      fields.filename,
+      fields.sha256,
+      fields.storedPath,
+      fields.notes ?? null,
+    ],
+  });
+  return Number(result.rows[0].id);
+}
+
+/**
+ * Remove a filed document.
+ *
+ * Returns the row so the caller can delete the object too - the same read-before-delete order
+ * `deleteRecord` uses, because once the row is gone nothing names the bytes.
+ */
+export async function deleteDocument(id: number): Promise<StudentDocumentRow | null> {
+  const doc = await getDocument(id);
+  if (!doc) return null;
+  const db = await getDb();
+  await db.execute({ sql: `DELETE FROM student_documents WHERE id = ?`, args: [id] });
+  return doc;
 }
 
 export async function getEligibility(
@@ -485,6 +606,70 @@ export async function updateTerm(
   });
 }
 
+/** One term, for an action that has to check what it is before changing it. */
+export async function getTerm(termId: number): Promise<TermRow | null> {
+  const db = await getDb();
+  const result = await db.execute({
+    sql: `SELECT * FROM enrollment_terms WHERE id = ?`,
+    args: [termId],
+  });
+  return result.rows[0] ? plain<TermRow>(result.rows[0]) : null;
+}
+
+/**
+ * Change how many quarters a term is graded over.
+ *
+ * **Nothing is cleared.** Moving a term from four periods to three leaves every `q4` value
+ * where it is; `gradingPeriods()` simply stops reading the column, and switching back brings
+ * the marks and the original final rating with it. A registrar undoing a mis-click gets their
+ * data back rather than finding it was thrown away on a dropdown change.
+ *
+ * What it does change is what counts: finals and the general average average three columns
+ * instead of four, and the fourth stops printing. That is the point of the setting.
+ *
+ * Logged, because it changes what a permanent record prints.
+ *
+ * `promotion_remark` is deliberately untouched. It is recomputed whenever grades are saved, and
+ * on an imported record it holds what the source form said - overwriting that as a side effect
+ * of a period change would be worse than a briefly stale remark.
+ */
+export async function updateTermPeriods(
+  termId: number,
+  periods: number,
+  before: number | null,
+  userId: number | null,
+): Promise<void> {
+  const db = await getDb();
+  const tx = await db.transaction("write");
+  try {
+    await tx.execute({
+      sql: `UPDATE enrollment_terms SET grading_periods = ? WHERE id = ?`,
+      args: [periods, termId],
+    });
+
+    const student = await tx.execute({
+      sql: `SELECT student_id FROM enrollment_terms WHERE id = ?`,
+      args: [termId],
+    });
+    const studentId = student.rows[0] ? Number(student.rows[0].student_id) : null;
+
+    await recordChange(
+      tx,
+      userId,
+      studentId,
+      "enrollment_terms",
+      termId,
+      "grading_periods",
+      before,
+      periods,
+    );
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback().catch(() => {});
+    throw err;
+  }
+}
+
 export async function updateStudent(
   id: number,
   fields: {
@@ -554,6 +739,37 @@ export async function updateStudentWithHistory(
       await recordChange(tx, userId, id, "students", id, field, (before as never)[field], value);
     }
 
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback().catch(() => {});
+    throw err;
+  }
+}
+
+/**
+ * Set a learner's status, logging the move.
+ *
+ * Its own function rather than a field on `updateStudentWithHistory` because it is set from a
+ * different place and at a different moment: the identity form saves a batch of fields on blur,
+ * while status is one pick from a menu that should commit the instant it is made.
+ *
+ * The history row is the point. This value gates whether a diploma can be printed, so "who
+ * decided this learner had graduated, and when" needs to be answerable later.
+ */
+export async function updateStudentStatus(
+  id: number,
+  status: StudentStatus | null,
+  before: string | null,
+  userId: number | null,
+): Promise<void> {
+  const db = await getDb();
+  const tx = await db.transaction("write");
+  try {
+    await tx.execute({
+      sql: `UPDATE students SET status = ?, updated_at = datetime('now') WHERE id = ?`,
+      args: [status, id],
+    });
+    await recordChange(tx, userId, id, "students", id, "status", before, status);
     await tx.commit();
   } catch (err) {
     await tx.rollback().catch(() => {});
@@ -761,6 +977,14 @@ export async function deleteStudent(studentId: number): Promise<void> {
     // Review flags die with the learner; leaving them would list issues against a record
     // that no longer exists.
     await tx.execute({ sql: `DELETE FROM import_issues WHERE student_id = ?`, args: [studentId] });
+
+    // Filed documents go too. The caller deletes the objects themselves - see
+    // `listDocuments()` in deleteRecord, which reads them before this runs for exactly the
+    // reason stored_path is cleared above: afterwards nothing names them.
+    await tx.execute({
+      sql: `DELETE FROM student_documents WHERE student_id = ?`,
+      args: [studentId],
+    });
 
     // The import history row is KEPT - it is the record of when that file came in - but it
     // must stop claiming to own a learner. `importBytes` treats a row with no live student as
