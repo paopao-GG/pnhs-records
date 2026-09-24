@@ -1,5 +1,13 @@
-appId: ph.deped.pnhs.records
-productName: PNHS Records
+# TALA - Tracking, Archiving & Learner Advancement.
+#
+# Windows identifies an application by `appId` and `productName`, so changing either makes this
+# a *different* application from the one already installed: the old "PNHS Records" entry stays
+# in Add/Remove Programs until somebody removes it. That was accepted knowingly when the app
+# was named. Do not change them again without the same deliberation.
+#
+# The data folder is deliberately NOT named after the app - see electron/main.cjs.
+appId: ph.deped.pnhs.tala
+productName: TALA
 copyright: Pantao National High School
 
 directories:
@@ -36,7 +44,7 @@ asarUnpack:
 win:
   target:
     - nsis
-  artifactName: PNHS-Records-Setup-${version}.${ext}
+  artifactName: TALA-Setup-${version}.${ext}
 
 nsis:
   # Per-user, so installing needs no administrator. It also keeps the app out of Program Files,
@@ -47,7 +55,7 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: PNHS Records
+  shortcutName: TALA
 
   # The uninstaller must not touch %LOCALAPPDATA%\PNHS Records.
   #

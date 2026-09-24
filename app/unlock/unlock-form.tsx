@@ -24,7 +24,7 @@ export function UnlockForm() {
       />
 
       {state.error && (
-        <p className="unlock-error" role="alert">
+        <p className="form-error" role="alert">
           {state.error}
         </p>
       )}
@@ -66,7 +66,7 @@ export function ChoosePasswordForm() {
       />
 
       {state.error && (
-        <p className="unlock-error" role="alert">
+        <p className="form-error" role="alert">
           {state.error}
         </p>
       )}

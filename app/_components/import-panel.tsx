@@ -105,7 +105,7 @@ export function ImportPanel() {
       <section className="card">
         <div className="card-head">
           <h3>Choose files</h3>
-          <span className="muted" style={{ fontSize: 12.5 }}>
+          <span className="muted meta"  >
             One record, or a whole year&rsquo;s worth
           </span>
         </div>
@@ -170,7 +170,7 @@ export function ImportPanel() {
                   style={{ width: `${Math.round((progress.done / Math.max(progress.total, 1)) * 100)}%` }}
                 />
               </div>
-              <span className="muted" style={{ fontSize: 12.5 }}>
+              <span className="muted meta"  >
                 {progress.stage} {progress.done} of {progress.total}
               </span>
             </div>
@@ -223,7 +223,7 @@ function Results({ summary }: { summary: ImportSummary }) {
             <tbody>
               {summary.results.map((r) => (
                 <tr key={r.filename}>
-                  <td style={{ fontSize: 12.5 }}>{r.filename}</td>
+                  <td className="meta">{r.filename}</td>
                   <td>
                     {r.studentId ? (
                       <Link href={`/students/${r.studentId}`}>{r.learner ?? "—"}</Link>
@@ -231,7 +231,7 @@ function Results({ summary }: { summary: ImportSummary }) {
                       <span className="muted">—</span>
                     )}
                   </td>
-                  <td className="mono" style={{ fontSize: 12.5 }}>
+                  <td className="mono meta"  >
                     {r.lrn ?? "—"}
                   </td>
                   <td className="num">{r.terms ?? "—"}</td>

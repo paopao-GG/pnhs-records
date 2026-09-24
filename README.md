@@ -1,4 +1,4 @@
-# PNHS Records — SF10 Permanent Records
+# TALA — Tracking, Archiving & Learner Advancement
 
 Learner permanent record system for **Pantao National High School** (School ID 301860,
 Libon, Albay, Region V). Search a learner, read their whole scholastic record, encode
@@ -13,9 +13,9 @@ network involved at any point.
 
 ## Installing and using it
 
-Run `PNHS-Records-Setup-<version>.exe` and open **PNHS Records** from the Start menu. It
+Run `TALA-Setup-<version>.exe` and open **TALA** from the Start menu. It
 installs for the current user only, so it needs no administrator, and it lands in
-`%LOCALAPPDATA%\Programs\PNHS Records`.
+`%LOCALAPPDATA%\Programs\TALA`.
 
 ### What the PC needs
 
@@ -57,8 +57,12 @@ are kept.
   backups\         whatever the backup button has written here
 ```
 
-Two things about that folder:
+Three things about that folder:
 
+- **It is still called *PNHS Records*, and that is deliberate.** The app was renamed to TALA;
+  this folder was not. Renaming it would strand the database on the next launch — TALA would
+  find nothing and offer to set a new password, which looks exactly like the records having
+  been deleted. Nobody but a maintainer ever sees this path.
 - **Uninstalling the app does not delete it.** The uninstaller deliberately leaves it alone.
   Removing the school's permanent records is not something a checkbox should do.
 - **Do not move it into OneDrive**, or any other syncing folder. File-sync clients copy a
@@ -95,7 +99,7 @@ On the machine you build from:
 
 1. **Bump `version` in `package.json`** — `0.1.0` to `0.1.1`.
 2. `npm run build:desktop`
-3. Copy the new `dist/PNHS-Records-Setup-<version>.exe` to the school's PC and run it.
+3. Copy the new `dist/TALA-Setup-<version>.exe` to the school's PC and run it.
 
 It replaces the old installation in place. Shortcuts, the password and every record stay as
 they were.
@@ -313,7 +317,7 @@ repository the data folder is `./data` beside the code; the installed app is poi
 ### Building the installer
 
 ```bash
-npm run build:desktop     # -> dist/PNHS-Records-Setup-<version>.exe
+npm run build:desktop     # -> dist/TALA-Setup-<version>.exe
 ```
 
 That runs `next build`, copies the assets the standalone server needs beside it, then two

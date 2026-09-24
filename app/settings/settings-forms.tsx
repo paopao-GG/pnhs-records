@@ -9,7 +9,7 @@ const initial: SettingsState = { error: null, done: null };
 function Notice({ state }: { state: SettingsState }) {
   if (state.error) {
     return (
-      <p className="unlock-error" role="alert">
+      <p className="form-error" role="alert">
         {state.error}
       </p>
     );
@@ -42,7 +42,7 @@ export function ChangePasswordForm() {
       <label htmlFor="next">New password</label>
       {/* Stated up front rather than learned by being refused: this form is the only other
           place the rule applies, and the unlock screen says the same thing. */}
-      <p className="muted" style={{ margin: "0 0 2px", fontSize: 12 }}>
+      <p className="muted meta" style={{ margin: "0 0 2px" }}>
         At least {MIN_PASSWORD_LENGTH} characters, including a capital letter and a number.
       </p>
       <input

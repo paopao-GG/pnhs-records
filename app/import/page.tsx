@@ -57,7 +57,7 @@ export default async function ImportPage() {
                 <tbody>
                   {history.map((h) => (
                     <tr key={h.id}>
-                      <td style={{ fontSize: 12.5 }}>{h.filename}</td>
+                      <td className="meta">{h.filename}</td>
                       <td>
                         {h.student_id ? (
                           <Link href={`/students/${h.student_id}`}>
@@ -76,7 +76,7 @@ export default async function ImportPage() {
                           {h.status}
                         </span>
                       </td>
-                      <td className="mono" style={{ fontSize: 12.5 }}>
+                      <td className="mono meta"  >
                         {h.imported_at}
                       </td>
                     </tr>

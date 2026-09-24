@@ -64,7 +64,7 @@ export default async function ReviewPage() {
                   </h3>
                   {first.lrn && <span className="chip mono">{first.lrn}</span>}
                   <div className="spacer" />
-                  <span className="muted" style={{ fontSize: 12.5 }}>
+                  <span className="muted meta"  >
                     {first.filename}
                   </span>
                 </div>

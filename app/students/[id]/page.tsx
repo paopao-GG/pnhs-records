@@ -206,7 +206,7 @@ function TermCard({
       <div className="card-head">
         <h3>{termLabel(term)}</h3>
         {term.section && <span className="chip">{term.section}</span>}
-        <span className="muted mono" style={{ fontSize: 12.5 }}>
+        <span className="muted mono meta"  >
           {term.school_year ?? "—"}
         </span>
         <div className="spacer" />
@@ -219,7 +219,7 @@ function TermCard({
 
       <div className="card-body">
         {term.track_strand && (
-          <p className="muted" style={{ marginTop: 0, fontSize: 13.5 }}>
+          <p className="muted meta" style={{ marginTop: 0 }}>
             <span className="eyebrow">Track / Strand </span> {term.track_strand}
           </p>
         )}
@@ -265,7 +265,7 @@ function TermCard({
                     </td>
                   )}
                   {isOld && (
-                    <td style={{ fontSize: 13 }}>
+                    <td className="meta">
                       {s.remarks ?? <span className="muted">—</span>}
                     </td>
                   )}

@@ -70,10 +70,10 @@ export function DocumentList({
             {documents.map((doc) => (
               <tr key={doc.id}>
                 <td>{documentLabel(doc.document_type)}</td>
-                <td style={{ fontSize: 12.5 }}>
+                <td className="meta">
                   <a href={`/api/students/${studentId}/documents/${doc.id}`}>{doc.filename}</a>
                 </td>
-                <td className="mono" style={{ fontSize: 12.5 }}>
+                <td className="mono meta"  >
                   {doc.uploaded_at}
                 </td>
                 <td className="row-actions">
@@ -110,7 +110,7 @@ export function DocumentList({
         </table>
       </div>
       {error && (
-        <p className="unlock-error" role="alert">
+        <p className="form-error" role="alert">
           {error}
         </p>
       )}

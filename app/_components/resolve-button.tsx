@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { markIssueResolved } from "../actions.ts";
 
@@ -11,19 +11,32 @@ import { markIssueResolved } from "../actions.ts";
 export function ResolveButton({ issueId }: { issueId: number }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
 
   return (
-    <button
-      className="btn"
-      disabled={pending}
-      onClick={() =>
-        startTransition(async () => {
-          await markIssueResolved(issueId);
-          router.refresh();
-        })
-      }
-    >
-      {pending ? "…" : "Checked"}
-    </button>
+    <>
+      <button
+        className="btn"
+        disabled={pending}
+        onClick={() =>
+          startTransition(async () => {
+            try {
+              setError(null);
+              await markIssueResolved(issueId);
+              router.refresh();
+            } catch (err) {
+              setError(err instanceof Error ? err.message : String(err));
+            }
+          })
+        }
+      >
+        {pending ? "…" : "Checked"}
+      </button>
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+    </>
   );
 }

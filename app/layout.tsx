@@ -7,7 +7,7 @@ import { LockButton } from "./_components/lock-button.tsx";
 import { THEME_SCRIPT, ThemeToggle } from "./_components/theme-toggle.tsx";
 
 export const metadata: Metadata = {
-  title: "PNHS Records — SF10 Permanent Records",
+  title: "TALA — Tracking, Archiving & Learner Advancement",
   description: "Learner permanent record system for Pantao National High School",
   // Nothing should index this. The app is not on a public URL any more, but the tag costs
   // nothing and the day someone points a browser at it from elsewhere is the day it matters.
@@ -69,8 +69,23 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               PN
             </div>
             <div>
-              <h1>Pantao National High School</h1>
-              <div className="sub">Learner Permanent Records · SF10</div>
+              {/* The app's name leads, with its expansion set beside it rather than beneath, so
+                  the masthead stays two lines tall and the sticky header does not grow. The
+                  school moves to the sub-line: still on every screen, no longer the wordmark. */}
+              <h1>
+                TALA{" "}
+                {/* The space is for the accessible name, not the layout (the flex gap does
+                    that): without it the heading reads aloud as "TALATracking". */}
+                <span className="masthead-expansion">
+                  Tracking, Archiving &amp; Learner Advancement
+                </span>
+              </h1>
+              <div className="sub">
+                Pantao National High School
+                {/* Dropped on narrow windows, where the full line wraps and the sticky header
+                    grows by a line. The school's name is the part that must stay. */}
+                <span className="sub-extra"> · Learner Permanent Records</span>
+              </div>
             </div>
             <nav>
               {open && (

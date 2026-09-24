@@ -266,6 +266,7 @@ export function StudentSearch({ students }: { students: StudentSummary[] }) {
           <button
             className="btn"
             data-variant="ghost"
+            data-size="sm"
             onClick={() => {
               setQuery("");
               setStatus(ANY);

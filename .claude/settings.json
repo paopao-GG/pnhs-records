@@ -5,7 +5,10 @@
       "Bash(node -e ' *)",
       "Bash(python3 -)",
       "Bash(node scripts/test-unlock.ts)",
-      "Bash(tasklist //FI \"IMAGENAME eq electron.exe\")"
+      "Bash(tasklist //FI \"IMAGENAME eq electron.exe\")",
+      "Bash(echo \"exit $?\")",
+      "Bash(MSYS_NO_PATHCONV=1 reg query \"HKCU\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Uninstall\" /s /f \"PNHS Records\")",
+      "Bash(MSYS_NO_PATHCONV=1 reg query \"HKCU\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Uninstall\" /s /f \"TALA\")"
     ]
   }
 }

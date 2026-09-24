@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { setStudentStatus } from "../actions.ts";
 import { STATUS_LABELS, STUDENT_STATUSES, type StudentStatus } from "@/lib/status.ts";
@@ -30,18 +30,26 @@ export function StatusPicker({
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
 
   function save(next: StudentStatus | null) {
     startTransition(async () => {
-      await setStudentStatus(studentId, next);
-      router.refresh();
+      try {
+        setError(null);
+        await setStudentStatus(studentId, next);
+        router.refresh();
+      } catch (err) {
+        // Without this the rejection went nowhere and the menu silently snapped back, which
+        // reads as "the app ignored me" rather than "that did not save".
+        setError(err instanceof Error ? err.message : String(err));
+      }
     });
   }
 
   return (
     <div className="status-picker">
       <select
-        className="input"
+        className="select"
         aria-label="Learner status"
         value={status ?? ""}
         disabled={pending}
@@ -63,12 +71,19 @@ export function StatusPicker({
           <button
             className="btn"
             data-variant="ghost"
+            data-size="sm"
             disabled={pending}
             onClick={() => save(suggestion)}
           >
             {pending ? "…" : "Accept"}
           </button>
         </div>
+      )}
+
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
       )}
     </div>
   );

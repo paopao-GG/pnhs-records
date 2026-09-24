@@ -227,7 +227,7 @@ async function run(): Promise<void> {
 
   await page.fill("#password", "the wrong phrase entirely");
   await page.click("button[data-variant=primary]");
-  await page.waitForSelector(".unlock-error");
+  await page.waitForSelector(".form-error");
   ok("a wrong password is refused", page.url().startsWith(`${BASE}/unlock`));
 
   await page.fill("#password", PASSWORD);

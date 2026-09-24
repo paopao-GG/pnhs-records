@@ -1,4 +1,4 @@
-# PNHS Records — Production Design
+# TALA — Production Design
 
 **Audience:** a developer implementing or maintaining this system.
 **Companion documents:** [technical-design.md](technical-design.md) describes the system as it
@@ -461,7 +461,7 @@ Remote Desktop, or going back to a hosted deployment — which is what the previ
 
 | | |
 |---|---|
-| Application | `PNHS-Records-Setup-<version>.exe`, NSIS, per-user install (no administrator needed) |
+| Application | `TALA-Setup-<version>.exe`, NSIS, per-user install (no administrator needed) |
 | Shell | Electron, spawning the Next standalone server on `127.0.0.1` |
 | Database | SQLite at `%LOCALAPPDATA%\PNHS Records\pnhs.db` |
 | Original files | `%LOCALAPPDATA%\PNHS Records\originals\` |
@@ -725,10 +725,54 @@ restyle is a token-and-property job rather than a re-markup.
   legibility, which is not a niche concern in an office reading names and six-digit numbers all
   day, and its round open letterforms are the single biggest reason this reads as soft. Fraunces
   survives in exactly two places, the masthead wordmark and the learner's name on the rail: the
-  institution and the person. IBM Plex Mono, tabular, for grades and LRNs. All three OFL and
+  app and the person. The wordmark was the school's name until the app was named TALA; the
+  school now sits on the sub-line beneath it, and the acronym is spelled out beside the name so
+  the sticky masthead stays two lines tall. IBM Plex Mono, tabular, for grades and LRNs. All three OFL and
   **self-hosted**; see `public/fonts/README.txt`.
 - **Composition.** The record page is a sticky identity rail beside a scrolling column of term
   plates, so the learner's name and seal stay on screen while six years of terms move past.
+
+### The scales, added September 2026
+
+Six features arrived in separate sessions and each brought its own numbers. By September the
+file held **three heights for the same small select** (36/32/27px), three for the same small
+button (36/31/22px), **twenty distinct font sizes**, more hardcoded inline in eleven `.tsx`
+files, and **twelve flex gaps** with nothing to be consistent *with*.
+
+So `:root` now carries three scales, and the point of them is that a new component has an
+obvious answer rather than a fresh invention:
+
+- **Spacing** `--s-1` … `--s-6`, 4px base. A value that does not land on a step moves to the
+  nearest step rather than earning a new one.
+- **Type** named by role — `--text-display`, `--text-title`, `--text-heading`, `--text-body`,
+  `--text-control`, `--text-small`, `--text-eyebrow` — plus `--text-grade`, deliberately
+  separate so the encoding grid never moves when the furniture does.
+- **Controls** two sizes, `--control-pad-*` and `--control-pad-*-sm`, declared once. The Accept
+  beside a status suggestion and the Clear in the filter bar are the same control and were
+  9px apart.
+
+`.meta` exists for the same reason: "secondary metadata" was being written as an inline
+`fontSize:` at four different values because there was no class to reach for.
+
+**The furniture was cut and the grids were not.** On the 1366×768 laptop a school office
+actually has, the search screen went from **5 learner rows above the fold to 7** — chrome above
+the first row fell 373px to 306px, and the row itself 71px to 60px. It stops there on purpose:
+reaching nine would mean setting learner names below 16px, and Atkinson Hyperlegible was chosen
+for low-vision legibility in an office reading names all day. Trading that for two more rows is
+the wrong way round. `.ledger` and `.grade-input` were not touched at all.
+
+Four defects were found by the same audit and fixed:
+
+- **`enrolled` chips were invisible as a state.** `STUDENT_STATUSES` has six values and the
+  stylesheet had rules for five, so an enrolled learner fell through to the base `.chip` and
+  rendered identically to a graduate. It now takes `--advisory`, which already carries
+  "in progress" elsewhere.
+- **71 lines of dead CSS** for a learner picker whose feature was removed.
+- **Dark mode lost two shadows** — `.masthead` and the primary button hardcoded light-charcoal
+  values the dark block never overrode, so the sticky masthead stopped separating from content.
+- **The Periods control broke its own term heading.** Its warning was a 30ch `<p>` inside
+  `.card-head`'s flex row, which pushed the promotion stamp onto a second line. It is the
+  select's `title` now.
 
 ### Five decisions worth not re-opening
 

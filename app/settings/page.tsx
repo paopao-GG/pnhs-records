@@ -53,7 +53,7 @@ export default async function SettingsPage() {
       <section className="card">
         <div className="card-head">
           <h3>Password</h3>
-          <span className="muted" style={{ fontSize: 12.5 }}>
+          <span className="muted meta"  >
             Last changed {when(changed)}
           </span>
         </div>

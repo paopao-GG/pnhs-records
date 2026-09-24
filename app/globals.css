@@ -1,5 +1,5 @@
 /*
- * PNHS Records — "Soft Office" design system.
+ * TALA — "Soft Office" design system.
  *
  * The premise: this is the room the record is kept in, not the record itself. A registrar sits
  * in front of this for whole afternoons, so the interface is calm, low-contrast and roomy —
@@ -23,7 +23,7 @@
 
 /*
  * Fraunces — display, and now used in exactly two places: the masthead wordmark and the
- * learner's name on the record rail. It carries the institution and the person; everything
+ * learner's name on the record rail. It carries the app and the person; everything
  * else that used to be set in it now reads too formal for a working screen.
  */
 @font-face {
@@ -184,6 +184,53 @@
 
   --rail: 300px;
   --measure: 1320px;
+
+  /*
+   * --- Spacing. One scale, 4px base. ---
+   *
+   * This exists because there was not one. Twelve different flex gaps had accumulated - 5, 6,
+   * 7, 8, 9, 10, 12, 14, 16, 18, 20, 34 - each chosen by whoever added a component that week,
+   * and nothing to be consistent *with*. A value that does not land on a step moves to the
+   * nearest step rather than earning a new one.
+   */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+
+  /*
+   * --- Type. A step per role, not per pixel. ---
+   *
+   * Twenty distinct sizes had accumulated, plus more hardcoded inline in the markup. These are
+   * named for what the text *is*, so "secondary metadata" has one answer everywhere instead of
+   * four (11.5, 12, 12.5 and 13.5 were all in use for it).
+   *
+   * --text-mono and --text-grade stay separate from --text-body: the ledger and the encoding
+   * grid are the one place density is not negotiable, and they must not move when the
+   * furniture does.
+   */
+  --text-display: 27px;
+  --text-title: 19px;
+  --text-heading: 16.5px;
+  --text-body: 14px;
+  --text-control: 13.5px;
+  --text-small: 12.5px;
+  --text-eyebrow: 10.5px;
+  --text-grade: 14px;
+
+  /*
+   * --- Controls. Two heights, and only two. ---
+   *
+   * Buttons and selects had drifted to three heights each: 36/32/27 for selects and 36/31/22
+   * for buttons, so the Accept beside a status suggestion and the Clear in the filter bar -
+   * the same control doing the same job - differed by 9px.
+   */
+  --control-pad-y: 8px;
+  --control-pad-x: 12px;
+  --control-pad-y-sm: 5px;
+  --control-pad-x-sm: 10px;
 }
 
 /*
@@ -299,7 +346,7 @@ a:hover {
 .masthead {
   background: var(--plate);
   border-bottom: 1px solid var(--rule);
-  box-shadow: 0 1px 3px -1px rgba(30, 32, 36, 0.05);
+  box-shadow: var(--shadow-plate);
   position: sticky;
   top: 0;
   z-index: 20;
@@ -342,14 +389,49 @@ a:hover {
   border-radius: 50%;
 }
 
-/* One of the two places Fraunces survives: the school's name. */
+/* One of the two places Fraunces survives: the app's name, TALA. */
+/*
+ * The wordmark is the app's name. It was the school's until TALA was named; the school now
+ * sits on the sub-line beneath, on every screen, as the institution the tool belongs to.
+ *
+ * Four letters carry less than twenty-seven did, so it is set larger and tracked slightly open
+ * - a short name at the old size read like a label rather than a name.
+ */
 .masthead h1 {
   font-family: var(--font-display);
-  font-variation-settings: "opsz" 18;
+  font-variation-settings: "opsz" 24;
   font-weight: 600;
-  font-size: 16.5px;
-  letter-spacing: -0.004em;
+  font-size: var(--text-title);
+  letter-spacing: 0.02em;
   line-height: 1.15;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: var(--s-2);
+}
+
+/*
+ * The acronym, spelled out beside the name rather than under it.
+ *
+ * Beside, so the masthead stays two lines and the sticky header - and every `top:` offset that
+ * clears it - keeps its height. In the UI face, not the display face: it explains the name, it
+ * is not part of it. Hidden on narrow windows, where it would wrap and double the header.
+ */
+.masthead-expansion {
+  font-family: var(--font-ui);
+  font-size: var(--text-small);
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--ink-2);
+}
+
+@media (max-width: 900px) {
+  /* Both go on narrow windows, for the same reason: either one wraps and adds a line to a
+     sticky header every screen scrolls beneath. The name and the school stay. */
+  .masthead-expansion,
+  .masthead .sub-extra {
+    display: none;
+  }
 }
 
 .masthead .sub {
@@ -417,7 +499,7 @@ a:hover {
 .page {
   max-width: var(--measure);
   margin: 0 auto;
-  padding: 40px 32px 110px;
+  padding: var(--s-5) var(--s-6) 72px;
 }
 
 /* The record page: a sticky identity rail beside the scholastic plates. */
@@ -480,13 +562,13 @@ a:hover {
 .page-head {
   display: flex;
   align-items: flex-end;
-  gap: 22px;
+  gap: var(--s-4);
   flex-wrap: wrap;
-  margin-bottom: 28px;
+  margin-bottom: var(--s-4);
 }
 
 .page-head h2 {
-  font-size: 29px;
+  font-size: var(--text-display);
   letter-spacing: -0.018em;
   line-height: 1.15;
 }
@@ -553,7 +635,7 @@ a:hover {
   border: 1px solid var(--rule);
   border-radius: var(--radius);
   box-shadow: var(--shadow-plate);
-  margin-bottom: 22px;
+  margin-bottom: var(--s-4);
   animation: plate-rise 0.5s cubic-bezier(0.22, 0.7, 0.25, 1) backwards;
 }
 
@@ -569,7 +651,7 @@ a:hover {
   align-items: center;
   gap: 14px;
   flex-wrap: wrap;
-  padding: 14px 22px;
+  padding: var(--s-3) var(--s-4);
   background: var(--plate-2);
   border-bottom: 1px solid var(--rule);
   /* Follows the plate's corner, or the tint squares off inside a rounded box. */
@@ -582,7 +664,7 @@ a:hover {
 }
 
 .card-body {
-  padding: 22px;
+  padding: var(--s-4);
 }
 
 .card[data-tone="quiet"] .card-head {
@@ -884,7 +966,10 @@ a:hover {
   white-space: nowrap;
 }
 
-.chip[data-tone="pass"] {
+/* A graduate reads like a pass, so the two share one rule rather than two copies that drift. */
+.chip[data-tone="pass"],
+.chip[data-status="jhs_graduate"],
+.chip[data-status="shs_graduate"] {
   border-color: color-mix(in srgb, var(--accent) 26%, transparent);
   background: var(--accent-tint);
   color: var(--accent);
@@ -903,32 +988,32 @@ a:hover {
 }
 
 /* --ink-2, not --ink-3: this is the one chip whose fill is --recess, and the lighter ink does
-   not clear 4.5:1 against it. */
-.chip[data-tone="muted"] {
-  border-color: var(--rule);
-  background: var(--recess);
-  color: var(--ink-2);
-}
-
-/* Status chips on the search list.
+   not clear 4.5:1 against it.
  *
- * A graduate reads as an accomplishment, so it takes the accent; someone who left takes the
- * muted treatment rather than --alert. Leaving school is not a failure state and colouring it
- * like one would editorialise on a permanent record. --alert stays reserved for destruction
- * and failing marks, which is the only reason it reads as a warning at all. */
-.chip[data-status="jhs_graduate"],
-.chip[data-status="shs_graduate"] {
-  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
-  background: var(--accent-tint);
-  color: var(--accent);
-}
-
+ * A learner who left takes the muted treatment rather than --alert. Leaving school is not a
+ * failure state, and colouring it like one would editorialise on a permanent record; --alert
+ * stays reserved for destruction and failing marks, which is the only reason it reads as a
+ * warning at all. */
+.chip[data-tone="muted"],
 .chip[data-status="transferred_out"],
 .chip[data-status="left_school"],
 .chip[data-status="old_curriculum"] {
   border-color: var(--rule);
   background: var(--recess);
   color: var(--ink-2);
+}
+
+/* Enrolled: the ongoing state, and the one the base .chip used to swallow.
+ *
+ * `STUDENT_STATUSES` has six values and this file had rules for five, so an enrolled learner
+ * fell through to the base chip - accent border, accent tint - and was indistinguishable from
+ * a graduate on the search list. --advisory is the right home: it already carries "in
+ * progress" elsewhere, and it separates cleanly from both the accent of a completed course and
+ * the accent of the grade-levels chip sitting next to it in the same row. */
+.chip[data-status="enrolled"] {
+  border-color: color-mix(in srgb, var(--advisory) 28%, transparent);
+  background: var(--advisory-tint);
+  color: var(--advisory);
 }
 
 /* ==========================================================================
@@ -943,10 +1028,8 @@ a:hover {
 
 /* The select sits inside a <dd> in the identity rail, where the other fields are plain text.
    Full width so it reads as part of that column rather than floating in it. */
-.status-picker .input {
+.status-picker .select {
   width: 100%;
-  font-size: 13px;
-  padding: 5px 8px;
 }
 
 .status-suggestion {
@@ -956,82 +1039,6 @@ a:hover {
   font-size: 12px;
 }
 
-.status-suggestion .btn {
-  padding: 2px 10px;
-  font-size: 12px;
-}
-
-/* ==========================================================================
-   Choosing a learner to file a document against
-   ========================================================================== */
-
-.student-picker {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-/* Capped and scrolling: this sits inside a form, and a long list would push the file field
-   and the button off the screen while the registrar is still deciding. */
-.picker-results {
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-sm);
-  background: var(--plate);
-  max-height: 230px;
-  overflow-y: auto;
-}
-
-.picker-row {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 100%;
-  padding: 8px 10px;
-  border: 0;
-  border-bottom: 1px solid var(--rule);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.picker-row:last-child {
-  border-bottom: 0;
-}
-
-.picker-row:hover,
-.picker-row:focus-visible {
-  background: var(--recess);
-}
-
-.picker-row .muted {
-  font-size: 11.5px;
-}
-
-/* The chosen learner, standing in for the search box once the question is answered. */
-.picked-student {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-sm);
-  background: var(--recess);
-  font-size: 13px;
-}
-
-.picked-student > div {
-  flex: 1;
-  min-width: 0;
-}
-
-.picker-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 10px;
-}
 
 /* ==========================================================================
    11. Buttons
@@ -1039,10 +1046,10 @@ a:hover {
 
 .btn {
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: var(--text-control);
   font-weight: 700;
   letter-spacing: 0.01em;
-  padding: 9px 16px;
+  padding: var(--control-pad-y) var(--control-pad-x);
   border-radius: var(--radius-sm);
   border: 1px solid var(--rule-2);
   background: var(--plate);
@@ -1076,7 +1083,7 @@ a:hover {
   background: var(--accent-solid);
   border-color: var(--accent-solid);
   color: var(--on-accent);
-  box-shadow: 0 1px 2px rgba(30, 32, 36, 0.12);
+  box-shadow: var(--shadow-plate);
 }
 
 .btn[data-variant="primary"]:hover {
@@ -1092,6 +1099,13 @@ a:hover {
 .btn[data-variant="danger"]:hover:not(:disabled) {
   background: var(--alert-tint);
   border-color: var(--alert);
+}
+
+/* A download link that has been clicked. It cannot report completion - see print-panel.tsx -
+   so it reports only that the click landed, which is what stops a second one. */
+.btn[data-busy="yes"] {
+  opacity: 0.72;
+  pointer-events: none;
 }
 
 .btn[data-variant="ghost"] {
@@ -1129,16 +1143,31 @@ a:hover {
    12. Inputs
    ========================================================================== */
 
+/*
+ * The small control, declared once.
+ *
+ * Three components had each invented their own: the filter bar at 13px/5px 8px, the status
+ * picker at the same numbers under a different selector, and the term heading at 12.5px/3px 6px
+ * - a 27px control against the filter bar's 32px, doing the same job a few hundred pixels away.
+ */
+.btn[data-size="sm"],
+.filter-bar .select,
+.status-picker .select,
+.term-periods .select {
+  font-size: var(--text-small);
+  padding: var(--control-pad-y-sm) var(--control-pad-x-sm);
+}
+
 .input,
 .select {
   font-family: var(--font-ui);
-  font-size: 14.5px;
+  font-size: var(--text-body);
   color: var(--ink);
   background: var(--plate);
   border: 1px solid var(--rule-2);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-inset);
-  padding: 9px 12px;
+  padding: var(--control-pad-y) var(--control-pad-x);
   width: 100%;
   transition: border-color 0.16s, box-shadow 0.16s;
 }
@@ -1273,12 +1302,12 @@ a:hover {
  */
 .search-bar {
   position: relative;
-  margin-bottom: 12px;
+  margin-bottom: var(--s-2);
 }
 
 .search-bar .input {
-  font-size: 19px;
-  padding: 17px 20px 17px 52px;
+  font-size: var(--text-title);
+  padding: var(--s-3) var(--s-4) var(--s-3) 52px;
   border-radius: var(--radius);
   background: var(--plate);
   border-color: var(--rule-2);
@@ -1318,14 +1347,26 @@ a:hover {
 }
 
 /* The count is set into the rule beneath the field, the way a caption sits under a plate. */
+/*
+ * Secondary metadata - filenames, timestamps, the small print inside a row or plate.
+ *
+ * This exists because the role was being expressed as an inline `fontSize:` in eleven files,
+ * at 12, 12.5, 13 and 13.5px, with no way to change it in one place. A class means the next
+ * person writes `className="meta"` instead of inventing a fourteenth value.
+ */
+.meta {
+  font-size: var(--text-small);
+  color: var(--ink-3);
+}
+
 .count-line {
   font-family: var(--font-mono);
   font-size: 11.5px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--ink-3);
-  margin: 0 0 16px;
-  padding-bottom: 11px;
+  margin: 0 0 var(--s-3);
+  padding-bottom: var(--s-1);
   border-bottom: 1px solid var(--rule);
 }
 
@@ -1341,7 +1382,7 @@ a:hover {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 13px 20px;
+  padding: var(--s-2) var(--s-4);
   border-bottom: 1px solid var(--rule);
   text-decoration: none;
   color: inherit;
@@ -1781,7 +1822,7 @@ mark {
   justify-content: center;
 }
 
-.unlock-error {
+.form-error {
   border: 1px solid color-mix(in srgb, var(--alert) 32%, transparent);
   border-left-width: 3px;
   border-left-color: var(--alert);
@@ -1880,8 +1921,12 @@ mark {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: 10px;
-  margin: 12px 0 4px;
+  gap: var(--s-2);
+  margin: var(--s-2) 0 var(--s-1);
+}
+
+.filter-bar .select {
+  min-width: 132px;
 }
 
 .filter-bar label {
@@ -1895,11 +1940,6 @@ mark {
   min-width: 132px;
   font-size: 13px;
   padding: 5px 8px;
-}
-
-.filter-bar .btn {
-  padding: 5px 12px;
-  font-size: 12.5px;
 }
 
 .result-group {
@@ -1931,6 +1971,10 @@ mark {
   gap: 8px;
 }
 
+.term-periods .select {
+  min-width: 116px;
+}
+
 .term-periods label {
   display: flex;
   align-items: center;
@@ -1943,11 +1987,4 @@ mark {
   font-size: 12.5px;
   padding: 3px 6px;
   min-width: 104px;
-}
-
-.term-periods-note {
-  font-size: 11.5px;
-  max-width: 30ch;
-  margin: 0;
-  line-height: 1.35;
 }

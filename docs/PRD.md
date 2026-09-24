@@ -1,4 +1,4 @@
-# PNHS Records — Product Requirements Document
+# TALA — Product Requirements Document
 
 **Product:** Learner permanent record system for Pantao National High School
 **Status:** Delivered as a **local Windows application**. Written **as-built**.
@@ -334,7 +334,7 @@ invariants.
 | | |
 |---|---|
 | **Platform** | Windows desktop. A Next.js 15 / React 19 application inside an Electron shell, served on `127.0.0.1` |
-| **Distribution** | `PNHS-Records-Setup-<version>.exe`, NSIS, per-user install — no administrator needed |
+| **Distribution** | `TALA-Setup-<version>.exe`, NSIS, per-user install — no administrator needed |
 | **Data** | 11 tables, plain SQL, no ORM, one SQLite file in `%LOCALAPPDATA%`. Subjects are rows, not columns — SHS lists vary by track |
 | **Integrations** | None, and now structurally none: nothing is fetched or sent at any point |
 | **Scale** | Modelled at 5,000 learners: ~200k subject rows, ~900 MB of originals, 40–80 MB database. Existing indexes suffice |
@@ -366,7 +366,7 @@ the part that is real.*
 ### Rollout
 
 1. `npm run build:desktop` — builds, checks the bundle, and writes
-   `dist/PNHS-Records-Setup-<version>.exe`.
+   `dist/TALA-Setup-<version>.exe`.
 2. Install it on the registrar's PC. **Confirm `%LOCALAPPDATA%\PNHS Records` is not inside
    OneDrive** — it is not by default, and it must not be moved there.
 3. First launch: choose the password, with the registrar present. Write it down and put it

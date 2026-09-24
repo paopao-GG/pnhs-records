@@ -1,7 +1,7 @@
 /**
  * The desktop shell.
  *
- * PNHS Records is a Next.js application. This process starts it as a local HTTP server and
+ * TALA is a Next.js application. This process starts it as a local HTTP server and
  * opens a window pointed at it — the app itself is unchanged, which is the reason for doing it
  * this way: the SF10 exporter, the three importers and the whole of `lib/` are Node code that
  * has to keep running as Node code.
@@ -40,7 +40,7 @@ const path = require("node:path");
  */
 if (!electron || typeof electron === "string" || !electron.app) {
   console.error(
-    "PNHS Records cannot start: this process is running as plain Node.\n" +
+    "TALA cannot start: this process is running as plain Node.\n" +
       "ELECTRON_RUN_AS_NODE is set in the environment. Clear it and launch again.",
   );
   process.exit(1);
@@ -62,6 +62,17 @@ const { app, BrowserWindow, dialog, Menu, session, shell } = electron;
  */
 function dataDirectory() {
   const local = process.env.LOCALAPPDATA || app.getPath("appData");
+  /*
+   * "PNHS Records", not "TALA", and that mismatch is deliberate.
+   *
+   * The app was renamed to TALA; this folder was not. It holds the school's live database and
+   * every archived original, and renaming it would strand all of it on the next launch - the
+   * app would find nothing, show a first-run "set a password" screen, and look to the
+   * registrar exactly like the records had been deleted.
+   *
+   * Nobody sees this path but us. If it is ever worth aligning, it takes a migration that
+   * moves the folder before the database is opened, not an edit to this line.
+   */
   const dir = path.join(local, "PNHS Records");
   mkdirSync(dir, { recursive: true });
   return dir;
@@ -153,7 +164,7 @@ function startServer(port, appDir, dataDir) {
     // rather than letting someone keep clicking an app that answers nothing.
     if (mainWindow && !mainWindow.isDestroyed()) {
       dialog.showErrorBox(
-        "PNHS Records has stopped",
+        "TALA has stopped",
         `The records service exited unexpectedly (code ${code}). Close and reopen the app.`,
       );
     }
@@ -209,13 +220,14 @@ function buildMenu(dataDir) {
       label: "Help",
       submenu: [
         {
-          label: "About PNHS Records",
+          label: "About TALA",
           click: () =>
             dialog.showMessageBox({
               type: "info",
-              title: "PNHS Records",
-              message: "PNHS Records",
+              title: "About TALA",
+              message: "TALA",
               detail:
+                "Tracking, Archiving & Learner Advancement\n\n" +
                 "Learner permanent records for Pantao National High School.\n\n" +
                 `Version ${app.getVersion()}\n\nRecords are stored in:\n${dataDir}`,
             }),
@@ -308,7 +320,7 @@ if (!app.requestSingleInstanceLock()) {
 
       if (!(await waitForServer(port))) {
         dialog.showErrorBox(
-          "PNHS Records could not start",
+          "TALA could not start",
           "The records service did not respond. If this keeps happening, reinstall the app.",
         );
         app.quit();
@@ -317,7 +329,7 @@ if (!app.requestSingleInstanceLock()) {
 
       createWindow(port);
     } catch (err) {
-      dialog.showErrorBox("PNHS Records could not start", String(err?.message ?? err));
+      dialog.showErrorBox("TALA could not start", String(err?.message ?? err));
       app.quit();
     }
   });

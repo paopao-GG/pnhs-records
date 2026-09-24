@@ -28,6 +28,23 @@ export function PrintPanel({
   sf9Levels: number[];
 }) {
   const [open, setOpen] = useState<"jhs" | "shs" | null>(null);
+  /*
+   * Which print is being prepared, if any.
+   *
+   * Filling a workbook takes a beat, and these are plain download links - the browser gives no
+   * signal that anything is happening, so the natural response to a slow machine is to click
+   * again and generate the document twice. This says the click landed.
+   *
+   * Cleared on a timer rather than on completion because a download has no event we can
+   * observe from here: the response never becomes a page. Two seconds is long enough to stop
+   * the second click and short enough that the button is never wrongly stuck.
+   */
+  const [preparing, setPreparing] = useState<string | null>(null);
+
+  function markPreparing(key: string) {
+    setPreparing(key);
+    setTimeout(() => setPreparing((p) => (p === key ? null : p)), 2000);
+  }
   const [selected, setSelected] = useState<Record<string, number[]>>(levelsByForm);
 
   const toggle = (form: string, level: number) => {
@@ -57,8 +74,12 @@ export function PrintPanel({
           className="btn"
           href={`/api/students/${studentId}/sf9?level=${level}`}
           title="The report card sent home, printed twice on one sheet"
+          data-busy={preparing === `sf9-${level}` ? "yes" : undefined}
+          onClick={() => markPreparing(`sf9-${level}`)}
         >
-          Report card{sf9Levels.length > 1 ? ` · Grade ${level}` : ""}
+          {preparing === `sf9-${level}`
+            ? "Preparing…"
+            : `Report card${sf9Levels.length > 1 ? ` · Grade ${level}` : ""}`}
         </a>
       ))}
       {forms.map((form) => {
@@ -74,9 +95,16 @@ export function PrintPanel({
                 data-variant="primary"
                 href={href(form)}
                 aria-disabled={chosen.length === 0}
-                onClick={(e) => chosen.length === 0 && e.preventDefault()}
+                data-busy={preparing === form ? "yes" : undefined}
+                onClick={(e) => {
+                  if (chosen.length === 0) {
+                    e.preventDefault();
+                    return;
+                  }
+                  markPreparing(form);
+                }}
               >
-                Print SF10 {form.toUpperCase()}
+                {preparing === form ? "Preparing…" : `Print SF10 ${form.toUpperCase()}`}
                 {chosen.length > 0 && chosen.length < levels.length && (
                   <span className="print-count">
                     {chosen.length} of {levels.length}
@@ -111,7 +139,7 @@ export function PrintPanel({
                   </label>
                 ))}
                 {chosen.length === 0 && (
-                  <p className="muted" style={{ margin: "8px 0 0", fontSize: 12.5 }}>
+                  <p className="muted meta" style={{ margin: "8px 0 0" }}>
                     Select at least one level.
                   </p>
                 )}

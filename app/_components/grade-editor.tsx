@@ -443,7 +443,7 @@ function LearnerInfo({
     <section className="card">
       <div className="card-head">
         <h3>Learner Information</h3>
-        <span className="muted" style={{ fontSize: 12.5 }}>
+        <span className="muted meta"  >
           Saves when you leave a field
         </span>
       </div>

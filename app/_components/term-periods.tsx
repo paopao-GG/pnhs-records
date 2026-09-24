@@ -52,6 +52,11 @@ export function TermPeriods({
         <span className="eyebrow">Periods</span>
         <select
           className="select"
+          title={
+            losesAQuarter
+              ? "Switching to 3 stops the fourth quarter counting and printing. The marks are kept."
+              : undefined
+          }
           value={String(periods)}
           disabled={pending}
           onChange={(e) => change(Number(e.target.value))}
@@ -62,14 +67,16 @@ export function TermPeriods({
         </select>
       </label>
 
-      {losesAQuarter && (
-        <p className="muted term-periods-note">
-          Switching to 3 stops the fourth quarter counting and printing. The marks are kept.
-        </p>
-      )}
-
+      {/*
+        * The warning is the select's own title rather than a paragraph beside it.
+        *
+        * This control sits in `.card-head`, which is a flex row also holding the term heading,
+        * the section chip and the promotion stamp. A 30ch paragraph became a flex item there
+        * and pushed the stamp onto a second line, so every term plate with fourth-quarter
+        * marks grew taller than its neighbours and the column went ragged.
+        */}
       {error && (
-        <p className="unlock-error" role="alert">
+        <p className="form-error" role="alert">
           {error}
         </p>
       )}
